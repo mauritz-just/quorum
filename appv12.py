@@ -1397,10 +1397,10 @@ if broadcast_clicked and user_prompt.strip():
             if rec_answer:
                 st.markdown("### 📌 Recommended Answer")
                 st.markdown(rec_answer)
-                st.markdown("---")
                 if supporting:
-                    with st.expander("📊 Supporting Analysis (Consensus · Insights · Disagreements · Confidence)", expanded=False):
-                        st.markdown(supporting)
+                    st.markdown("---")
+                    st.markdown(supporting)
+                st.markdown("---")
             else:
                 st.markdown("### 📌 Final Synthesised Answer")
                 st.markdown(synthesis)
