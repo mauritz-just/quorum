@@ -849,9 +849,11 @@ if "user_keys" not in st.session_state:
 
 MODELS = build_models_dict(st.session_state.user_keys, FALLBACK_MODELS)
 
-# Load persisted user settings once per session
+# ── Load persisted user data once per session (survives refresh & re-login) ──
 if "s_meta_prompt" not in st.session_state:
     st.session_state.s_meta_prompt = load_meta_prompt(_user_id)
+if "query_history" not in st.session_state:
+    st.session_state.query_history = load_history(_user_id)
 
 st.markdown("""
 <style>
@@ -1069,10 +1071,6 @@ for key, default in [
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
-
-# Load history from DB once per session (persists across browser refreshes)
-if "query_history" not in st.session_state:
-    st.session_state.query_history = load_history(_user_id)
 
 # Apply refined/reused prompt BEFORE the text_area widget is instantiated
 if st.session_state._prompt_to_apply is not None:

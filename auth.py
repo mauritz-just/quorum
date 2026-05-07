@@ -113,9 +113,8 @@ def check_session():
 
 
 def logout():
-    """Clear the user session."""
-    st.session_state.pop("user", None)
-    st.session_state.pop("user_keys", None)
+    """Clear all session state so the next login starts completely fresh."""
+    st.session_state.clear()
 
 
 def require_auth():
