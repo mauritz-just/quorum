@@ -7,6 +7,7 @@ All queries use parameterised statements to prevent SQL injection.
 
 import sqlite3
 import os
+import json
 from datetime import datetime
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quorumai.db")
@@ -71,15 +72,22 @@ def init_db():
         );
     """)
     conn.commit()
+    # Add responses_json column if it doesn't exist yet (migration for existing DBs)
+    try:
+        conn.execute("ALTER TABLE query_history ADD COLUMN responses_json TEXT")
+        conn.commit()
+    except Exception:
+        pass  # column already exists
     conn.close()
 
 
 def save_history_entry(user_id, entry):
     """Persist a history entry to the database."""
+    responses_json = json.dumps(entry.get("responses") or {})
     conn = _get_conn()
     conn.execute(
-        """INSERT INTO query_history (user_id, summary, full_prompt, prompt, mode, quality, complexity, synthesis)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        """INSERT INTO query_history (user_id, summary, full_prompt, prompt, mode, quality, complexity, synthesis, responses_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             user_id,
             entry.get("summary", ""),
@@ -89,6 +97,7 @@ def save_history_entry(user_id, entry):
             entry.get("quality", 0),
             entry.get("complexity", ""),
             entry.get("synthesis"),
+            responses_json,
         ),
     )
     conn.commit()
@@ -117,6 +126,10 @@ def load_history(user_id, limit=50):
             ts_display = ts_full[11:19] if ts_date == today else ts_full[:16]
         except Exception:
             ts_display = ts_full[:16]
+        try:
+            responses = json.loads(d.get("responses_json") or "{}")
+        except Exception:
+            responses = {}
         entries.append({
             "timestamp": ts_display,
             "summary": d["summary"],
@@ -126,11 +139,11 @@ def load_history(user_id, limit=50):
             "quality": d["quality"],
             "complexity": d["complexity"],
             "synthesis": d["synthesis"],
-            "models_used": [],
-            "successful": [],
+            "models_used": list(responses.keys()),
+            "successful": list(responses.keys()),
             "failed": [],
             "times": {},
-            "responses": {},
+            "responses": responses,
         })
     return list(reversed(entries))  # oldest first
 

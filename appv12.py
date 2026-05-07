@@ -1030,8 +1030,32 @@ with st.sidebar:
             _label = f"{_mode_icon} {_hidx}. {_entry.get('summary', 'Query')}"
             if st.button(_label, key=f"sidebar_reuse_{_hidx}", use_container_width=True):
                 st.session_state._prompt_to_apply = _entry["full_prompt"]
+                st.session_state._loaded_history_entry = _entry
                 st.session_state.last_analysis = None
                 st.session_state.refinement_history = []
+                # Build broadcast_output from this history entry so results render immediately
+                _resp = _entry.get("responses") or {}
+                _syn = _entry.get("synthesis")
+                _entry_results = [
+                    {
+                        "name": k, "response": v, "error": None,
+                        "time": 0, "words": len((v or "").split()),
+                    }
+                    for k, v in _resp.items()
+                ]
+                st.session_state.broadcast_output = {
+                    "synthesis": _syn,
+                    "results": _entry_results,
+                    "mode": _entry.get("mode", "Aggregator"),
+                    "prompt": _entry["full_prompt"],
+                    "quality": _entry.get("quality", 0),
+                    "complexity": _entry.get("complexity", ""),
+                    "n_models": len(_entry_results),
+                    "has_timing": False,
+                    "from_history": True,
+                    "timestamp": _entry.get("timestamp", ""),
+                    "summary": _entry.get("summary", ""),
+                } if (_resp or _syn) else None
                 st.rerun()
         st.markdown("")
         if st.button("🗑️ Clear history", use_container_width=True, key="sidebar_clear_history"):
@@ -1113,6 +1137,8 @@ for key, default in [
     ("_pending_refined", None),
     ("_pending_analysis", None),
     ("_prompt_to_apply", None),
+    ("_loaded_history_entry", None),
+    ("broadcast_output", None),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -1314,18 +1340,15 @@ if analyze_clicked and user_prompt.strip():
     if not st.session_state.refinement_history:
         st.session_state.refinement_history.append({"version": "v1 (original)", "prompt": user_prompt, "quality": st.session_state.last_analysis["quality"], "changes": []})
 
-# ── STAGE 2: Broadcast (output appears BEFORE diagnostic) ──
+# ── STAGE 2: Broadcast — compute & store, rendering happens below ──
 if broadcast_clicked and user_prompt.strip():
+    st.session_state.broadcast_output = None  # clear while running
+    st.session_state._loaded_history_entry = None
     analysis = analyse_prompt(user_prompt)
     models_to_call = selected_models
 
-    st.markdown("---")
-    st.markdown("### 📡 Broadcasting")
-    st.caption(f"Final prompt quality: **{analysis['quality']}/100** · complexity: **{analysis['complexity_level']}** · {len(models_to_call)} model(s)")
-
     effective_prompt = build_effective_prompt(user_prompt)
 
-    # ── Progress bar directly under buttons ──
     n_models = len(models_to_call)
     progress_bar = st.progress(0, text=f"📡 Calling {n_models} model(s) in parallel…")
     status_area = st.empty()
@@ -1357,73 +1380,25 @@ if broadcast_clicked and user_prompt.strip():
     is_arena = "Arena" in mode
     synthesis = None
 
-    if is_arena:
-        st.markdown("#### 🏟️ Arena — Side-by-Side Comparison")
-        successful = [r for r in results if r["response"]]
-        if successful:
-            fastest = min(successful, key=lambda r: r["time"])
-            longest = max(successful, key=lambda r: r["words"])
-            mc1, mc2, mc3 = st.columns(3)
-            mc1.metric("⚡ Fastest", fastest["name"], f"{fastest['time']}s")
-            mc2.metric("📝 Most Detailed", longest["name"], f"{longest['words']} words")
-            mc3.metric("✅ Responses", f"{len(successful)}/{len(results)}")
-        cols = st.columns(len(results))
-        for i, result in enumerate(results):
-            cfg = MODELS[result["name"]]
-            with cols[i]:
-                st.markdown(f'<div class="model-card"><div class="model-header"><span class="model-name" style="color:{cfg["color"]}">{cfg["icon"]} {result["name"]}</span><span class="model-meta">{result["time"]}s</span></div></div>', unsafe_allow_html=True)
-                if result["error"]:
-                    err_info = interpret_error(result["error"], result["name"])
-                    st.error(f"{err_info['icon']} **{err_info['title']}**\n\n{err_info['message']}")
-                    st.caption(f"💡 {err_info['hint']}")
-                else:
-                    st.markdown(f'<span class="metric-pill">⏱ {result["time"]}s</span><span class="metric-pill">📝 {result["words"]} words</span>', unsafe_allow_html=True)
-                    st.markdown("")
-                    st.markdown(result["response"])
-    else:
-        # ── Aggregator: synthesis FIRST, then individual responses in columns ──
-        st.markdown("#### 🧠 Aggregator — Synthesised Output")
-
+    if not is_arena:
         preferred_agg = st.session_state.get("s_aggregator_model")
         if preferred_agg == "(auto)":
             preferred_agg = None
-
         with st.spinner("🧠 Aggregation Engine: merging outputs…"):
             synthesis = aggregate_responses(effective_prompt, results, preferred_aggregator=preferred_agg)
 
-        if synthesis:
-            rec_answer, supporting = _extract_recommended_answer(synthesis)
-            src_names = [r["name"] for r in results if r["response"]]
-            if rec_answer:
-                st.markdown("### 📌 Recommended Answer")
-                st.markdown(rec_answer)
-                if supporting:
-                    st.markdown("---")
-                    st.markdown(supporting)
-                st.markdown("---")
-            else:
-                st.markdown("### 📌 Final Synthesised Answer")
-                st.markdown(synthesis)
-                st.markdown("---")
-            st.caption(f"Sources: {', '.join(src_names)}")
-            st.download_button("📥 Download Result", data=synthesis, file_name="quorum_result.md", mime="text/markdown")
-        else:
-            st.warning("Not enough successful responses to aggregate (need at least 2).")
-
-        # Individual model responses in columns
-        st.markdown("#### 📋 Individual Model Responses")
-        if results:
-            ind_cols = st.columns(max(1, len(results)))
-            for i, result in enumerate(results):
-                cfg = MODELS[result["name"]]
-                with ind_cols[i]:
-                    if result["response"]:
-                        st.markdown(f"**{cfg['icon']} {result['name']}**")
-                        st.caption(f"*{result['time']}s · {result['words']} words*")
-                        st.markdown(result["response"])
-                    else:
-                        err_info = interpret_error(result["error"], result["name"])
-                        st.warning(f"{err_info['icon']} **{result['name']}**\n\n{err_info['title']}: {err_info['message']}")
+    # ── Store to session_state so output persists across reruns ──
+    st.session_state.broadcast_output = {
+        "synthesis": synthesis,
+        "results": results,
+        "mode": "Arena" if is_arena else "Aggregator",
+        "prompt": user_prompt,
+        "quality": analysis["quality"],
+        "complexity": analysis["complexity_level"],
+        "n_models": len(models_to_call),
+        "has_timing": True,
+        "from_history": False,
+    }
 
     # ── Save to history (session state + DB) ──
     history_entry = {
@@ -1439,14 +1414,110 @@ if broadcast_clicked and user_prompt.strip():
         st.session_state.query_history.append(history_entry)
         save_history_entry(_user_id, history_entry)
 
-    with st.expander("📊 Response Time Comparison"):
-        max_time = max(r["time"] for r in results) if results else 1
-        for r in results:
-            cfg = MODELS[r["name"]]
-            bar_pct = r["time"] / max_time if max_time > 0 else 0
-            label = "✅" if not r["error"] else "❌"
-            st.markdown(f"**{cfg['icon']} {r['name']}** — {r['time']}s  ·  {r['words']} words {label}")
-            st.progress(min(bar_pct, 1.0))
+
+# ── Persistent results render (live broadcast OR history recall) ──
+_bo = st.session_state.get("broadcast_output")
+if _bo:
+    _bo_mode = _bo.get("mode", "Aggregator")
+    _bo_synthesis = _bo.get("synthesis")
+    _bo_results = _bo.get("results") or []
+    _bo_has_timing = _bo.get("has_timing", False)
+    _bo_from_history = _bo.get("from_history", False)
+
+    st.markdown("---")
+    st.markdown("### 📡 Broadcasting")
+    _bo_quality = _bo.get("quality", 0)
+    _bo_complexity = _bo.get("complexity", "")
+    _bo_n = _bo.get("n_models", len(_bo_results))
+    st.caption(f"Final prompt quality: **{_bo_quality}/100** · complexity: **{_bo_complexity}** · {_bo_n} model(s)")
+
+    if _bo_from_history:
+        _bo_ts = _bo.get("timestamp", "")
+        _bo_summary = _bo.get("summary", "")
+        st.markdown(
+            f'<div style="background:#0f172a;border:1px solid #1e3a5f;border-left:4px solid #3b82f6;'
+            f'border-radius:8px;padding:0.6rem 1rem;margin:0.4rem 0 0.8rem;">'
+            f'<span style="color:#93c5fd;font-size:0.82rem;font-weight:600">📂 Loaded from history</span>'
+            f'<span style="color:#475569;font-size:0.78rem;margin-left:0.8rem">{_bo_ts} · {_bo_summary}</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    if _bo_mode == "Arena":
+        st.markdown("#### 🏟️ Arena — Side-by-Side Comparison")
+        _successful = [r for r in _bo_results if r.get("response")]
+        if _successful and _bo_has_timing:
+            _fastest = min(_successful, key=lambda r: r["time"])
+            _longest = max(_successful, key=lambda r: r["words"])
+            mc1, mc2, mc3 = st.columns(3)
+            mc1.metric("⚡ Fastest", _fastest["name"], f"{_fastest['time']}s")
+            mc2.metric("📝 Most Detailed", _longest["name"], f"{_longest['words']} words")
+            mc3.metric("✅ Responses", f"{len(_successful)}/{len(_bo_results)}")
+        if _bo_results:
+            _cols = st.columns(max(1, len(_bo_results)))
+            for _i, _r in enumerate(_bo_results):
+                _cfg = MODELS.get(_r["name"], {})
+                with _cols[_i]:
+                    if _bo_has_timing:
+                        st.markdown(f'<div class="model-card"><div class="model-header"><span class="model-name" style="color:{_cfg.get("color","#94a3b8")}">{_cfg.get("icon","🤖")} {_r["name"]}</span><span class="model-meta">{_r["time"]}s</span></div></div>', unsafe_allow_html=True)
+                    else:
+                        st.markdown(f'**{_cfg.get("icon","🤖")} {_r["name"]}**')
+                    if _r.get("error"):
+                        _ei = interpret_error(_r["error"], _r["name"])
+                        st.error(f"{_ei['icon']} **{_ei['title']}**\n\n{_ei['message']}")
+                        st.caption(f"💡 {_ei['hint']}")
+                    else:
+                        if _bo_has_timing:
+                            st.markdown(f'<span class="metric-pill">⏱ {_r["time"]}s</span><span class="metric-pill">📝 {_r["words"]} words</span>', unsafe_allow_html=True)
+                            st.markdown("")
+                        st.markdown(_r.get("response", ""))
+    else:
+        # ── Aggregator ──
+        st.markdown("#### 🧠 Aggregator — Synthesised Output")
+        if _bo_synthesis:
+            _rec_answer, _supporting = _extract_recommended_answer(_bo_synthesis)
+            _src_names = [r["name"] for r in _bo_results if r.get("response")]
+            if _rec_answer:
+                st.markdown("### 📌 Recommended Answer")
+                st.markdown(_rec_answer)
+                if _supporting:
+                    st.markdown("---")
+                    st.markdown(_supporting)
+                st.markdown("---")
+            else:
+                st.markdown("### 📌 Final Synthesised Answer")
+                st.markdown(_bo_synthesis)
+                st.markdown("---")
+            if _src_names:
+                st.caption(f"Sources: {', '.join(_src_names)}")
+            st.download_button("📥 Download Result", data=_bo_synthesis, file_name="quorum_result.md", mime="text/markdown", key="dl_bo_synthesis")
+        else:
+            st.warning("Not enough successful responses to aggregate (need at least 2).")
+
+        if _bo_results:
+            st.markdown("#### 📋 Individual Model Responses")
+            _ind_cols = st.columns(max(1, len(_bo_results)))
+            for _i, _r in enumerate(_bo_results):
+                _cfg = MODELS.get(_r["name"], {})
+                with _ind_cols[_i]:
+                    if _r.get("response"):
+                        st.markdown(f"**{_cfg.get('icon','🤖')} {_r['name']}**")
+                        if _bo_has_timing:
+                            st.caption(f"*{_r['time']}s · {_r['words']} words*")
+                        st.markdown(_r["response"])
+                    elif _r.get("error"):
+                        _ei = interpret_error(_r["error"], _r["name"])
+                        st.warning(f"{_ei['icon']} **{_r['name']}**\n\n{_ei['title']}: {_ei['message']}")
+
+    if _bo_has_timing and _bo_results:
+        with st.expander("📊 Response Time Comparison"):
+            _max_t = max(r["time"] for r in _bo_results) if _bo_results else 1
+            for _r in _bo_results:
+                _cfg = MODELS.get(_r["name"], {})
+                _bp = _r["time"] / _max_t if _max_t > 0 else 0
+                _lbl = "✅" if not _r.get("error") else "❌"
+                st.markdown(f"**{_cfg.get('icon','🤖')} {_r['name']}** — {_r['time']}s  ·  {_r['words']} words {_lbl}")
+                st.progress(min(_bp, 1.0))
 
 # ── Prompt Diagnostic (rendered AFTER broadcast results) ──
 analysis = st.session_state.last_analysis
