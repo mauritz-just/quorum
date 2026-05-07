@@ -70,11 +70,26 @@ def init_db():
             user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
             meta_prompt TEXT DEFAULT ''
         );
+
+        CREATE TABLE IF NOT EXISTS projects (
+            id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            title TEXT NOT NULL DEFAULT 'New Project',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id);
     """)
     conn.commit()
     # Add responses_json column if it doesn't exist yet (migration for existing DBs)
     try:
         conn.execute("ALTER TABLE query_history ADD COLUMN responses_json TEXT")
+        conn.commit()
+    except Exception:
+        pass  # column already exists
+    # Add project_id column if it doesn't exist yet (migration for existing DBs)
+    try:
+        conn.execute("ALTER TABLE query_history ADD COLUMN project_id TEXT")
         conn.commit()
     except Exception:
         pass  # column already exists
@@ -223,3 +238,104 @@ def get_user_by_id(user_id):
     row = cursor.fetchone()
     conn.close()
     return dict(row) if row else None
+
+
+def save_project(user_id, project_id, title):
+    """Upsert a project record."""
+    conn = _get_conn()
+    conn.execute(
+        """INSERT INTO projects (id, user_id, title, updated_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET title=excluded.title, updated_at=excluded.updated_at""",
+        (project_id, user_id, title[:65], datetime.now().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def load_projects(user_id):
+    """Return list of project dicts for a user, newest first."""
+    conn = _get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM projects WHERE user_id = ? ORDER BY updated_at DESC",
+        (user_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def save_project_entry(user_id, project_id, entry):
+    """Save a history entry tagged to a project."""
+    responses_json = json.dumps(entry.get("responses") or {})
+    conn = _get_conn()
+    conn.execute(
+        """INSERT INTO query_history
+               (user_id, project_id, summary, full_prompt, prompt, mode, quality, complexity, synthesis, responses_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            user_id, project_id,
+            entry.get("summary", ""),
+            entry.get("full_prompt", ""),
+            entry.get("prompt", ""),
+            entry.get("mode", ""),
+            entry.get("quality", 0),
+            entry.get("complexity", ""),
+            entry.get("synthesis"),
+            responses_json,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def load_project_entries(user_id, project_id, limit=100):
+    """Load history entries for one project, oldest first."""
+    conn = _get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        """SELECT * FROM query_history
+           WHERE user_id = ? AND project_id = ?
+           ORDER BY created_at ASC LIMIT ?""",
+        (user_id, project_id, limit),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    entries = []
+    for row in rows:
+        d = dict(row)
+        ts_full = d.get("created_at", "")
+        try:
+            from datetime import date
+            ts_date = ts_full[:10]
+            today = date.today().isoformat()
+            ts_display = ts_full[11:19] if ts_date == today else ts_full[:16]
+        except Exception:
+            ts_display = ts_full[:16]
+        try:
+            responses = json.loads(d.get("responses_json") or "{}")
+        except Exception:
+            responses = {}
+        entries.append({
+            "timestamp": ts_display,
+            "summary": d["summary"],
+            "full_prompt": d["full_prompt"],
+            "prompt": d["prompt"],
+            "mode": d["mode"],
+            "quality": d["quality"],
+            "complexity": d["complexity"],
+            "synthesis": d["synthesis"],
+            "responses": responses,
+            "models_used": list(responses.keys()),
+        })
+    return entries
+
+
+def delete_project(user_id, project_id):
+    """Delete a project and all its history entries."""
+    conn = _get_conn()
+    conn.execute("DELETE FROM query_history WHERE user_id = ? AND project_id = ?", (user_id, project_id))
+    conn.execute("DELETE FROM projects WHERE id = ? AND user_id = ?", (project_id, user_id))
+    conn.commit()
+    conn.close()
