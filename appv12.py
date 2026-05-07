@@ -27,7 +27,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from db import init_db, save_history_entry, load_history, clear_history
+from db import init_db, save_history_entry, load_history, clear_history, save_meta_prompt, load_meta_prompt
 from auth import require_auth, logout
 from key_manager import (
     get_keys, build_models_dict, save_key, delete_key,
@@ -849,6 +849,10 @@ if "user_keys" not in st.session_state:
 
 MODELS = build_models_dict(st.session_state.user_keys, FALLBACK_MODELS)
 
+# Load persisted user settings once per session
+if "s_meta_prompt" not in st.session_state:
+    st.session_state.s_meta_prompt = load_meta_prompt(_user_id)
+
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap');
@@ -907,15 +911,17 @@ with st.sidebar:
         st.slider("Temperature (creativity)", 0.0, 1.5, st.session_state.s_temperature, 0.1, key="_w_temp", on_change=lambda: _save("_w_temp", "s_temperature"))
         st.slider("Timeout per model (seconds)", 30, 600, st.session_state.s_timeout, 30, key="_w_to", on_change=lambda: _save("_w_to", "s_timeout"))
         st.toggle("Show Prompt Analysis", value=st.session_state.s_show_analysis, key="_w_sa", on_change=lambda: _save("_w_sa", "s_show_analysis"))
-        if "s_meta_prompt" not in st.session_state:
-            st.session_state.s_meta_prompt = ""
+        def _save_meta():
+            st.session_state.s_meta_prompt = st.session_state["_w_meta_prompt"]
+            save_meta_prompt(_user_id, st.session_state.s_meta_prompt)
+
         st.text_area(
             "Meta-prompt (prepended to every broadcast)",
             value=st.session_state.s_meta_prompt,
             key="_w_meta_prompt",
             height=90,
             placeholder="e.g. Always respond in German. Be concise. Use bullet points.",
-            on_change=lambda: _save("_w_meta_prompt", "s_meta_prompt"),
+            on_change=_save_meta,
         )
         st.markdown("---")
 

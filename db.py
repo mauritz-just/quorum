@@ -64,6 +64,11 @@ def init_db():
         );
 
         CREATE INDEX IF NOT EXISTS idx_query_history_user ON query_history(user_id);
+
+        CREATE TABLE IF NOT EXISTS user_settings (
+            user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            meta_prompt TEXT DEFAULT ''
+        );
     """)
     conn.commit()
     conn.close()
@@ -136,6 +141,28 @@ def clear_history(user_id):
     conn.execute("DELETE FROM query_history WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
+
+
+def save_meta_prompt(user_id, meta_prompt):
+    """Upsert the user's meta-prompt."""
+    conn = _get_conn()
+    conn.execute(
+        "INSERT INTO user_settings (user_id, meta_prompt) VALUES (?, ?) "
+        "ON CONFLICT(user_id) DO UPDATE SET meta_prompt = excluded.meta_prompt",
+        (user_id, meta_prompt or ""),
+    )
+    conn.commit()
+    conn.close()
+
+
+def load_meta_prompt(user_id):
+    """Return the user's saved meta-prompt, or empty string if none."""
+    conn = _get_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT meta_prompt FROM user_settings WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row["meta_prompt"] if row else ""
 
 
 def get_or_create_user(github_id, email, display_name, avatar_url):
