@@ -561,18 +561,63 @@ def build_effective_prompt(user_prompt):
 def _extract_recommended_answer(text):
     """
     Pull the Recommended Answer block out of synthesis markdown.
+    Works line-by-line so it handles all common LLM heading formats:
+      ## 1. Recommended Answer
+      **1. Recommended Answer**
+      1. **Recommended Answer**
+      **Recommended Answer**: inline text...
     Returns (answer_text, rest_text). If not found, (None, text).
     """
-    m = re.search(
-        r"(?:^|\n)[#\s*]*(?:\d+\.\s*)?[*_]*Recommended Answer[*_]*[:\s]*\n+(.*?)"
-        r"(?=\n[#*]+\s*(?:\d+\.\s*)?[A-Z*]|\Z)",
-        text, re.DOTALL | re.IGNORECASE,
+    lines = text.split("\n")
+    header_idx = None
+    inline_content = None
+
+    # Patterns that identify a section header line
+    _section_re = re.compile(
+        r"^(#{1,4}\s+|[*_]{1,2}|\d+\.\s+|[*_]{1,2}\d+\.\s+)*"
+        r"(?:\d+\.\s*)?[*_]*Recommended Answer[*_]*\s*:?\s*(.*)",
+        re.IGNORECASE,
     )
-    if not m:
+    # Pattern to detect the START of any other section header line
+    _next_section_re = re.compile(
+        r"^(#{1,4}\s+|\*{1,2}\d+\.|\d+\.\s+\*{0,2}[A-Z]|\*{2}[A-Z])[^\n]*$",
+        re.IGNORECASE,
+    )
+
+    for i, line in enumerate(lines):
+        m = _section_re.match(line.strip())
+        if m:
+            header_idx = i
+            rest_of_header = m.group(2).strip() if m.group(2) else ""
+            inline_content = rest_of_header if rest_of_header else None
+            break
+
+    if header_idx is None:
         return None, text
-    answer = m.group(1).strip()
-    before = text[:m.start()].strip()
-    after = text[m.end():].strip()
+
+    # Collect answer body lines (everything after the header until next section)
+    body_start = header_idx + 1
+    end_idx = len(lines)
+    for j in range(body_start, len(lines)):
+        stripped = lines[j].strip()
+        if stripped and _next_section_re.match(stripped):
+            end_idx = j
+            break
+
+    body_lines = ([inline_content] if inline_content else []) + lines[body_start:end_idx]
+
+    # Strip leading/trailing blank lines from body
+    while body_lines and not body_lines[0].strip():
+        body_lines.pop(0)
+    while body_lines and not body_lines[-1].strip():
+        body_lines.pop()
+
+    if not body_lines:
+        return None, text
+
+    answer = "\n".join(body_lines).strip()
+    before = "\n".join(lines[:header_idx]).strip()
+    after = "\n".join(lines[end_idx:]).strip()
     rest = "\n\n".join(p for p in [before, after] if p)
     return answer, rest
 
