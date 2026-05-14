@@ -40,7 +40,7 @@ PROVIDER_PRESETS = {
         "api_type": "anthropic",
         "icon": "🟠",
     },
-    "Google (Gemini)": {
+    "Gemini": {
         "endpoint": "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
         "models": ["gemini-2.5-flash", "gemini-2.5-pro"],
         "api_type": "gemini",
@@ -106,19 +106,32 @@ MODEL_DISPLAY_NAMES = {
 }
 
 
+# Map legacy provider names → current display labels (for keys stored before a preset was renamed).
+PROVIDER_DISPLAY_ALIASES = {
+    "Google (Gemini)": "Gemini",
+    "Google": "Gemini",
+}
+
+
 def get_model_display_name(model_id: str) -> str:
     """Return a human-readable model name, falling back to the raw model_id."""
     return MODEL_DISPLAY_NAMES.get(model_id, model_id)
 
 
+def normalize_provider_name(provider_name: str) -> str:
+    """Map legacy / verbose provider names to the canonical display label."""
+    return PROVIDER_DISPLAY_ALIASES.get(provider_name, provider_name)
+
+
 def build_key_display_name(display_name: str, provider_name: str, model_id: str) -> str:
     """
-    Canonical display name for a user key: 'ModelName · Alias'.
-    Ensures all keys for the same model look identical except for the alias.
+    Canonical display name for a user key: 'Provider · ModelName · Alias'.
+    All keys for the same model look identical except for the alias suffix.
     """
+    provider_pretty = normalize_provider_name(provider_name)
     model_pretty = get_model_display_name(model_id)
-    alias = (display_name or "").strip() or provider_name
-    return f"{model_pretty} · {alias}"
+    alias = (display_name or "").strip() or provider_pretty
+    return f"{provider_pretty} · {model_pretty} · {alias}"
 
 
 # ──────────────────────────────────────────────

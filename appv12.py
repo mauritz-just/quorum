@@ -1256,28 +1256,27 @@ with st.sidebar:
     )
 
     st.markdown("### 🤖 Output Models")
+    st.caption(f"Select up to {MAX_ACTIVE_KEYS} models to receive your prompt:")
     _all_model_names = list(MODELS.keys())
 
-    # Initialise and keep valid (models may appear/disappear as keys are toggled)
-    if "active_model_selection" not in st.session_state:
-        st.session_state.active_model_selection = _all_model_names[:min(MAX_ACTIVE_KEYS, len(_all_model_names))]
-    else:
-        st.session_state.active_model_selection = [
-            m for m in st.session_state.active_model_selection if m in MODELS
-        ]
-        # Add new models up to the limit when the list grows
-        if not st.session_state.active_model_selection:
-            st.session_state.active_model_selection = _all_model_names[:min(MAX_ACTIVE_KEYS, len(_all_model_names))]
+    # Default selection on first render: first N models checked.
+    for _idx, _name in enumerate(_all_model_names):
+        _ckey = f"chk_{_name}"
+        if _ckey not in st.session_state:
+            st.session_state[_ckey] = (_idx < MAX_ACTIVE_KEYS)
 
-    selected_models = st.multiselect(
-        f"Active models (max {MAX_ACTIVE_KEYS}):",
-        options=_all_model_names,
-        default=st.session_state.active_model_selection,
-        key="model_multiselect",
-        format_func=lambda n: f"{MODELS[n]['icon']} {n}",
-        max_selections=MAX_ACTIVE_KEYS,
-    )
-    st.session_state.active_model_selection = selected_models
+    # Active count from current widget state — used to disable further checks when at limit.
+    _live_active_count = sum(1 for n in _all_model_names if st.session_state.get(f"chk_{n}", False))
+    _at_max = _live_active_count >= MAX_ACTIVE_KEYS
+
+    selected_models = []
+    for _name, _cfg in MODELS.items():
+        _is_active = st.session_state.get(f"chk_{_name}", False)
+        _disabled = _at_max and not _is_active
+        _label = f"{_cfg['icon']} {_name}"
+        _help = f"Pause an active model first (max {MAX_ACTIVE_KEYS})" if _disabled else None
+        if st.checkbox(_label, key=f"chk_{_name}", disabled=_disabled, help=_help):
+            selected_models.append(_name)
 
     if not selected_models:
         st.error("Select at least 1 model.")
