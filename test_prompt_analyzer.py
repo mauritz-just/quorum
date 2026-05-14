@@ -9,7 +9,7 @@ import pytest
 
 
 class TestPromptAnalyzerBasics:
-    """Shape and contract tests — does the analyzer return what callers expect?"""
+    """Shape and contract tests, does the analyzer return what callers expect?"""
 
     def test_analyse_returns_expected_keys(self, app_module):
         result = app_module["PromptAnalyzer"]("Write a summary.").analyse()
@@ -159,8 +159,6 @@ class TestCategorisation:
 
     def test_substring_keyword_collision_is_a_known_bug(self, app_module):
         """
-        REGRESSION-DOCUMENTING TEST — this is a known pre-existing bug.
-
         The category keyword lookup uses substring matching ('api' in self.lower),
         so 'capitalism' incorrectly matches the 'api' keyword from the code-task list.
 
