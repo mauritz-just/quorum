@@ -93,16 +93,37 @@ def init_db():
         conn.commit()
     except Exception:
         pass  # column already exists
+    # Add extras_json column for errors, word_counts, analysis, model metadata
+    try:
+        conn.execute("ALTER TABLE query_history ADD COLUMN extras_json TEXT")
+        conn.commit()
+    except Exception:
+        pass  # column already exists
     conn.close()
 
 
 def save_history_entry(user_id, entry):
     """Persist a history entry to the database."""
     responses_json = json.dumps(entry.get("responses") or {})
+    # Store all extra fields (errors, word_counts, analysis, model metadata) as one JSON blob
+    extras = {
+        "errors":           entry.get("errors") or {},
+        "word_counts":      entry.get("word_counts") or {},
+        "analysis":         entry.get("analysis"),
+        "output_models":    entry.get("output_models") or [],
+        "aggregator_model": entry.get("aggregator_model"),
+        "analyzer_model":   entry.get("analyzer_model"),
+        "models_used":      entry.get("models_used") or [],
+        "successful":       entry.get("successful") or [],
+        "failed":           entry.get("failed") or [],
+        "times":            entry.get("times") or {},
+    }
+    extras_json = json.dumps(extras)
     conn = _get_conn()
     conn.execute(
-        """INSERT INTO query_history (user_id, summary, full_prompt, prompt, mode, quality, complexity, synthesis, responses_json)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        """INSERT INTO query_history
+               (user_id, summary, full_prompt, prompt, mode, quality, complexity, synthesis, responses_json, extras_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             user_id,
             entry.get("summary", ""),
@@ -113,6 +134,7 @@ def save_history_entry(user_id, entry):
             entry.get("complexity", ""),
             entry.get("synthesis"),
             responses_json,
+            extras_json,
         ),
     )
     conn.commit()
@@ -145,20 +167,31 @@ def load_history(user_id, limit=50):
             responses = json.loads(d.get("responses_json") or "{}")
         except Exception:
             responses = {}
+        try:
+            extras = json.loads(d.get("extras_json") or "{}")
+        except Exception:
+            extras = {}
         entries.append({
-            "timestamp": ts_display,
-            "summary": d["summary"],
-            "full_prompt": d["full_prompt"],
-            "prompt": d["prompt"],
-            "mode": d["mode"],
-            "quality": d["quality"],
-            "complexity": d["complexity"],
-            "synthesis": d["synthesis"],
-            "models_used": list(responses.keys()),
-            "successful": list(responses.keys()),
-            "failed": [],
-            "times": {},
-            "responses": responses,
+            "timestamp":        ts_display,
+            "summary":          d["summary"],
+            "full_prompt":      d["full_prompt"],
+            "prompt":           d["prompt"],
+            "mode":             d["mode"],
+            "quality":          d["quality"],
+            "complexity":       d["complexity"],
+            "synthesis":        d["synthesis"],
+            "responses":        responses,
+            # Prefer extras values; fall back gracefully for old rows
+            "models_used":      extras.get("models_used") or list(responses.keys()),
+            "successful":       extras.get("successful") or list(responses.keys()),
+            "failed":           extras.get("failed") or [],
+            "times":            extras.get("times") or {},
+            "errors":           extras.get("errors") or {},
+            "word_counts":      extras.get("word_counts") or {},
+            "analysis":         extras.get("analysis"),
+            "output_models":    extras.get("output_models") or [],
+            "aggregator_model": extras.get("aggregator_model"),
+            "analyzer_model":   extras.get("analyzer_model"),
         })
     return list(reversed(entries))  # oldest first
 
