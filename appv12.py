@@ -1922,6 +1922,9 @@ if _bo:
                         _ei = interpret_error(_r["error"], _r["name"])
                         st.error(f"{_ei['icon']} **{_ei['title']}**\n\n{_ei['message']}")
                         st.caption(f"💡 {_ei['hint']}")
+                        if _ei.get("raw"):
+                            with st.expander("🔍 Raw error"):
+                                st.code(_ei["raw"], language="text")
                     else:
                         if _bo_has_timing:
                             st.markdown(f'<span class="metric-pill">⏱ {_r["time"]}s</span><span class="metric-pill">📝 {_r["words"]} words</span>', unsafe_allow_html=True)
@@ -1964,6 +1967,9 @@ if _bo:
                     elif _r.get("error"):
                         _ei = interpret_error(_r["error"], _r["name"])
                         st.warning(f"{_ei['icon']} **{_r['name']}**\n\n{_ei['title']}: {_ei['message']}")
+                        if _ei.get("raw"):
+                            with st.expander("🔍 Raw error"):
+                                st.code(_ei["raw"], language="text")
 
     if _bo_has_timing and _bo_results:
         with st.expander("📊 Response Time Comparison"):
