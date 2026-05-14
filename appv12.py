@@ -948,15 +948,24 @@ class GeminiClient(ModelClient):
 class OpenAICompatClient(ModelClient):
     """Any provider speaking the OpenAI Chat Completions shape (Groq, Mistral, Cerebras, OpenRouter, …)."""
 
+    # OpenAI o-series reasoning models require max_completion_tokens and reject temperature
+    _O_SERIES_RE = re.compile(r"^o\d")
+
     def generate(self, prompt, max_tokens=1024, temperature=0.7, timeout=90):
         cfg = self.config
         headers = {"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"}
+        model_id = cfg.get("model_id", "")
+        is_o_series = bool(self._O_SERIES_RE.match(model_id))
         payload = {
-            "model": cfg["model_id"],
+            "model": model_id,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": max_tokens,
-            "temperature": temperature,
         }
+        if is_o_series:
+            # Reasoning models: use max_completion_tokens, no temperature
+            payload["max_completion_tokens"] = max_tokens
+        else:
+            payload["max_tokens"] = max_tokens
+            payload["temperature"] = temperature
         resp = requests.post(cfg["endpoint"], headers=headers, json=payload, timeout=timeout)
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
