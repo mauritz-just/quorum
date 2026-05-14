@@ -83,9 +83,10 @@ FALLBACK_MODELS = {
     },
 }
 
-# OpenAI o5-mini — always listed; key comes from env or user-added key
+# OpenAI o5-mini — key from Streamlit secrets (preferred) or .env fallback
+_openai_key = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", ""))
 FALLBACK_MODELS["OpenAI · o5-mini"] = {
-    "api_key": os.getenv("OPENAI_API_KEY", ""),
+    "api_key": _openai_key,
     "endpoint": "https://api.openai.com/v1/chat/completions",
     "model_id": "o5-mini",
     "type": "openai_compat",
