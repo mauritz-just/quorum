@@ -31,7 +31,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from db import (init_db, save_history_entry, load_history, clear_history,
-                save_meta_prompt, load_meta_prompt)
+                save_meta_prompt, load_meta_prompt,
+                save_project, load_projects, save_project_entry,
+                load_project_entries, delete_project)
 from auth import require_auth, logout
 from key_manager import (
     get_keys, build_models_dict, save_key, delete_key,
@@ -1158,6 +1160,29 @@ if "s_meta_prompt" not in st.session_state:
 if "query_history" not in st.session_state:
     st.session_state.query_history = load_history(_user_id)
 
+# ── Projects / Sessions ──
+if "projects" not in st.session_state:
+    _db_projects = load_projects(_user_id)
+    if _db_projects:
+        st.session_state.projects = []
+        for _p in _db_projects:
+            _p["entries"] = load_project_entries(_user_id, _p["id"])
+            st.session_state.projects.append(_p)
+    else:
+        # First run: create a default project
+        _default_id = str(_uuid.uuid4())
+        _default_proj = {
+            "id": _default_id,
+            "title": "New Project",
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+            "entries": [],
+        }
+        st.session_state.projects = [_default_proj]
+        save_project(_user_id, _default_id, "New Project")
+
+if "active_project_id" not in st.session_state:
+    st.session_state.active_project_id = st.session_state.projects[0]["id"]
 
 st.markdown("""
 <style>
@@ -1265,6 +1290,12 @@ with st.sidebar:
         if _ckey not in st.session_state:
             st.session_state[_ckey] = (_idx < MAX_ACTIVE_KEYS)
 
+    # Enforce limit: if legacy session state has more than MAX_ACTIVE_KEYS checked, uncheck the extras.
+    _checked_now = [n for n in _all_model_names if st.session_state.get(f"chk_{n}", False)]
+    if len(_checked_now) > MAX_ACTIVE_KEYS:
+        for _name in _checked_now[MAX_ACTIVE_KEYS:]:
+            st.session_state[f"chk_{_name}"] = False
+
     # Active count from current widget state — used to disable further checks when at limit.
     _live_active_count = sum(1 for n in _all_model_names if st.session_state.get(f"chk_{n}", False))
     _at_max = _live_active_count >= MAX_ACTIVE_KEYS
@@ -1290,74 +1321,137 @@ with st.sidebar:
     if st.session_state.s_show_value_prop:
         st.markdown("Our tool earns a spot in your daily workflow for one of three reasons. **Cross-verification** for students and researchers. **Best answer, guaranteed** for professionals. **Cost efficiency** for companies with multiple AI subscriptions. We run all models **in parallel**, add a **synthesis layer** with confidence scores, make **disagreement transparent**, and do it all in **one prompt box**.")
 
-    # ── Prompt Log ──
+    # ── Projects / Sessions ──
     st.markdown("---")
-    st.markdown("### 📜 Prompt Log")
+    st.markdown("### 📁 Projects")
 
-    _log = st.session_state.get("query_history") or []
-    if not _log:
-        st.caption("No runs yet — submit a prompt to get started.")
-    else:
-        # Show newest first
-        for _lidx, _entry in enumerate(reversed(_log)):
-            _real_idx = len(_log) - 1 - _lidx  # index into _log (for unique keys)
-            _lmode = _entry.get("mode", "")
-            _lmode_icon = "🏟️" if _lmode == "Arena" else ("🧠" if _lmode == "Aggregator" else "✨")
-            _ltitle = (_entry.get("summary") or _entry.get("prompt") or "Query")[:55]
-            _lts = _entry.get("timestamp", "")
-            _lq = _entry.get("quality", 0)
-            _llabel = f"{_lmode_icon} {_ltitle} · {_lts} · Q{_lq}"
+    # Helper to get the active project dict
+    def _get_active_project():
+        for _p in st.session_state.projects:
+            if _p["id"] == st.session_state.active_project_id:
+                return _p
+        # Fallback: first project
+        if st.session_state.projects:
+            st.session_state.active_project_id = st.session_state.projects[0]["id"]
+            return st.session_state.projects[0]
+        return None
 
-            if st.button(_llabel, key=f"plog_{_real_idx}", use_container_width=True):
-                # ── Restore run state ──
-                st.session_state._prompt_to_apply = _entry["full_prompt"]
-                st.session_state.refinement_history = []
+    # ── New Project button ──
+    if st.button("➕ New Project", use_container_width=True, key="new_project_btn"):
+        _new_id = str(_uuid.uuid4())
+        _new_proj = {
+            "id": _new_id,
+            "title": "New Project",
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+            "entries": [],
+        }
+        st.session_state.projects.insert(0, _new_proj)
+        st.session_state.active_project_id = _new_id
+        save_project(_user_id, _new_id, "New Project")
+        st.session_state.broadcast_output = None
+        st.rerun()
 
-                # Restore analysis (stored or reconstruct)
-                _stored_analysis = _entry.get("analysis")
-                st.session_state.last_analysis = _stored_analysis  # None is fine; diagnostic section won't show
+    # ── Project selector ──
+    _proj_titles = [
+        (f"📂 {_p['title'][:45]}" if _p["id"] != st.session_state.active_project_id
+         else f"▶ {_p['title'][:45]}")
+        for _p in st.session_state.projects
+    ]
+    _proj_ids = [_p["id"] for _p in st.session_state.projects]
+    _active_idx = _proj_ids.index(st.session_state.active_project_id) if st.session_state.active_project_id in _proj_ids else 0
 
-                # Rebuild results list (successes + errors + timing)
-                _resp  = _entry.get("responses") or {}
-                _errs  = _entry.get("errors") or {}
-                _times = _entry.get("times") or {}
-                _wcs   = _entry.get("word_counts") or {}
-                _all_models = _entry.get("models_used") or list(_resp.keys())
-                _has_timing = bool(_times and any(v and v > 0 for v in _times.values()))
+    _selected_proj_label = st.selectbox(
+        "Active project",
+        _proj_titles,
+        index=_active_idx,
+        key="proj_selector",
+        label_visibility="collapsed",
+    )
+    _selected_proj_id = _proj_ids[_proj_titles.index(_selected_proj_label)]
+    if _selected_proj_id != st.session_state.active_project_id:
+        st.session_state.active_project_id = _selected_proj_id
+        st.session_state.broadcast_output = None
+        st.rerun()
 
-                _entry_results = []
-                for _mname in _all_models:
-                    _entry_results.append({
-                        "name":     _mname,
-                        "response": _resp.get(_mname),
-                        "error":    _errs.get(_mname),
-                        "time":     _times.get(_mname, 0),
-                        "words":    _wcs.get(_mname) or len((_resp.get(_mname) or "").split()),
-                    })
+    _active_proj = _get_active_project()
 
-                _syn = _entry.get("synthesis")
-                st.session_state.broadcast_output = {
-                    "synthesis":   _syn,
-                    "results":     _entry_results,
-                    "mode":        _entry.get("mode", "Aggregator"),
-                    "prompt":      _entry["full_prompt"],
-                    "quality":     _entry.get("quality", 0),
-                    "complexity":  _entry.get("complexity", ""),
-                    "n_models":    len(_entry_results),
-                    "has_timing":  _has_timing,
-                    "from_history": True,
-                    "timestamp":   _entry.get("timestamp", ""),
-                    "summary":     _entry.get("summary", ""),
-                } if (_entry_results or _syn) else None
+    if _active_proj:
+        # ── Rename active project ──
+        def _do_rename_project():
+            _new_title = st.session_state.get("_proj_rename_input", "").strip()
+            if _new_title:
+                _active_proj["title"] = _new_title[:65]
+                _active_proj["updated_at"] = datetime.now().isoformat()
+                save_project(_user_id, _active_proj["id"], _new_title)
+
+        st.text_input(
+            "Project name",
+            value=_active_proj["title"],
+            max_chars=65,
+            key="_proj_rename_input",
+            on_change=_do_rename_project,
+            label_visibility="collapsed",
+            placeholder="Project name…",
+        )
+
+        # ── Delete project button (only if more than one project) ──
+        if len(st.session_state.projects) > 1:
+            if st.button("🗑️ Delete project", use_container_width=True, key="del_proj_btn"):
+                delete_project(_user_id, _active_proj["id"])
+                st.session_state.projects = [_p for _p in st.session_state.projects if _p["id"] != _active_proj["id"]]
+                st.session_state.active_project_id = st.session_state.projects[0]["id"]
+                st.session_state.broadcast_output = None
                 st.rerun()
 
-    st.markdown("")
-    if _log:
-        if st.button("🗑️ Clear Prompt Log", use_container_width=True, key="clear_prompt_log"):
-            clear_history(_user_id)
-            st.session_state.query_history = []
-            st.session_state.broadcast_output = None
-            st.rerun()
+        # ── Active project entry history ──
+        _proj_entries = _active_proj.get("entries", [])
+        if not _proj_entries:
+            st.caption("No prompts yet in this project.")
+        else:
+            for _eidx, _entry in enumerate(reversed(_proj_entries)):
+                _emode_icon = "🏟️" if _entry.get("mode") == "Arena" else ("🧠" if _entry.get("mode") == "Aggregator" else "✨")
+                _etitle = _entry.get("summary") or _entry.get("prompt") or "Query"
+                _etitle = _etitle[:65]
+                _elabel = f"{_emode_icon} {_etitle}"
+                with st.expander(_elabel, expanded=False):
+                    st.caption(f"🕐 {_entry.get('timestamp','')}  ·  Quality {_entry.get('quality',0)}/100  ·  {_entry.get('complexity','')}")
+                    _mode_str = _entry.get('mode','')
+                    if _mode_str:
+                        st.caption(f"Mode: {_mode_str}")
+                    _succ = _entry.get("successful") or list((_entry.get("responses") or {}).keys())
+                    if _succ:
+                        st.caption(f"✅ {', '.join(_succ)}")
+                    _fail = _entry.get("failed", [])
+                    if _fail:
+                        st.caption(f"❌ {', '.join(_fail)}")
+                    # Reuse button
+                    if st.button("♻️ Reuse prompt", key=f"reuse_{_active_proj['id']}_{_eidx}", use_container_width=True):
+                        st.session_state._prompt_to_apply = _entry["full_prompt"]
+                        st.session_state.last_analysis = None
+                        st.session_state.refinement_history = []
+                        # Also restore broadcast output
+                        _resp = _entry.get("responses") or {}
+                        _syn = _entry.get("synthesis")
+                        _entry_results = [
+                            {"name": k, "response": v, "error": None,
+                             "time": 0, "words": len((v or "").split())}
+                            for k, v in _resp.items()
+                        ]
+                        st.session_state.broadcast_output = {
+                            "synthesis": _syn,
+                            "results": _entry_results,
+                            "mode": _entry.get("mode", "Aggregator"),
+                            "prompt": _entry["full_prompt"],
+                            "quality": _entry.get("quality", 0),
+                            "complexity": _entry.get("complexity", ""),
+                            "n_models": len(_entry_results),
+                            "has_timing": False,
+                            "from_history": True,
+                            "timestamp": _entry.get("timestamp", ""),
+                            "summary": _entry.get("summary", ""),
+                        } if (_resp or _syn) else None
+                        st.rerun()
 
     # ── API Key Management ──
     st.markdown("---")
@@ -1742,29 +1836,45 @@ if broadcast_clicked and user_prompt.strip():
         "from_history": False,
     }
 
-    # ── Save run to Prompt Log (query_history) ──
+    # ── Save to active project ──
     _summary_text = summarise_prompt(user_prompt)
     history_entry = {
-        "timestamp":        time.strftime("%H:%M:%S"),
-        "summary":          _summary_text,
-        "prompt":           user_prompt[:120] + ("…" if len(user_prompt) > 120 else ""),
-        "full_prompt":      user_prompt,
-        "mode":             "Arena" if is_arena else "Aggregator",
-        "quality":          analysis["quality"],
-        "complexity":       analysis["complexity_level"],
-        "analysis":         analysis,
-        "models_used":      [r["name"] for r in results],
-        "successful":       [r["name"] for r in results if r["response"]],
-        "failed":           [r["name"] for r in results if r["error"]],
-        "times":            {r["name"]: r["time"] for r in results},
-        "word_counts":      {r["name"]: r["words"] for r in results},
-        "responses":        {r["name"]: r["response"] for r in results if r["response"]},
-        "errors":           {r["name"]: r["error"] for r in results if r["error"]},
-        "synthesis":        synthesis if not is_arena else None,
-        "aggregator_model": st.session_state.get("s_aggregator_model"),
-        "analyzer_model":   st.session_state.get("s_analyzer_model"),
-        "output_models":    list(models_to_call),
+        "timestamp": time.strftime("%H:%M:%S"),
+        "summary": _summary_text,
+        "prompt": user_prompt[:120] + ("…" if len(user_prompt) > 120 else ""),
+        "full_prompt": user_prompt,
+        "mode": "Arena" if is_arena else "Aggregator",
+        "quality": analysis["quality"],
+        "complexity": analysis["complexity_level"],
+        "models_used": [r["name"] for r in results],
+        "successful": [r["name"] for r in results if r["response"]],
+        "failed": [r["name"] for r in results if r["error"]],
+        "times": {r["name"]: r["time"] for r in results},
+        "responses": {r["name"]: r["response"] for r in results if r["response"]},
+        "synthesis": synthesis if not is_arena else None,
     }
+
+    # Add to active project in session state
+    _active_proj_save = next(
+        (_p for _p in st.session_state.projects if _p["id"] == st.session_state.active_project_id),
+        None
+    )
+    if _active_proj_save is not None:
+        _proj_entries = _active_proj_save.setdefault("entries", [])
+        # Avoid duplicates
+        if not _proj_entries or _proj_entries[-1]["full_prompt"] != user_prompt:
+            _proj_entries.append(history_entry)
+            _active_proj_save["updated_at"] = datetime.now().isoformat()
+            # Auto-rename project from first entry if still called "New Project"
+            if _active_proj_save["title"] == "New Project" and len(_proj_entries) == 1:
+                _auto_title = _summary_text[:65]
+                _active_proj_save["title"] = _auto_title
+                save_project(_user_id, _active_proj_save["id"], _auto_title)
+            else:
+                save_project(_user_id, _active_proj_save["id"], _active_proj_save["title"])
+            save_project_entry(_user_id, _active_proj_save["id"], history_entry)
+
+    # Keep query_history in sync for backward compatibility
     if not st.session_state.query_history or st.session_state.query_history[-1]["full_prompt"] != user_prompt:
         st.session_state.query_history.append(history_entry)
         save_history_entry(_user_id, history_entry)
@@ -1792,7 +1902,7 @@ if _bo:
         st.markdown(
             f'<div style="background:#0f172a;border:1px solid #1e3a5f;border-left:4px solid #3b82f6;'
             f'border-radius:8px;padding:0.6rem 1rem;margin:0.4rem 0 0.8rem;">'
-            f'<span style="color:#93c5fd;font-size:0.82rem;font-weight:600">📜 Loaded from Prompt Log</span>'
+            f'<span style="color:#93c5fd;font-size:0.82rem;font-weight:600">📂 Loaded from history</span>'
             f'<span style="color:#475569;font-size:0.78rem;margin-left:0.8rem">{_bo_ts} · {_bo_summary}</span>'
             f'</div>',
             unsafe_allow_html=True,

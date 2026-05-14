@@ -78,7 +78,7 @@ PROVIDER_PRESETS = {
     },
 }
 
-MAX_ACTIVE_KEYS = 5   # max simultaneously active models
+MAX_ACTIVE_KEYS = 4   # max simultaneously active models
 MAX_STORED_KEYS = 50  # max total keys in storage
 MAX_KEYS_PER_USER = MAX_ACTIVE_KEYS  # backward-compat alias
 
