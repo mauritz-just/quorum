@@ -1198,6 +1198,14 @@ st.markdown("""
     .metric-pill { display: inline-block; background: #1e293b; padding: 0.25rem 0.7rem; border-radius: 20px; font-size: 0.78rem; color: #94a3b8; margin-right: 0.4rem; }
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
+    /* Compact Prompt Log sidebar buttons */
+    section[data-testid="stSidebar"] div[data-testid="stButton"] button {
+        padding-top: 0.2rem !important;
+        padding-bottom: 0.2rem !important;
+        font-size: 0.78rem !important;
+        line-height: 1.3 !important;
+        min-height: unset !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1336,7 +1344,7 @@ with st.sidebar:
             _ltitle = (_entry.get("summary") or _entry.get("prompt") or "Query")[:55]
             _lts = _entry.get("timestamp", "")
             _lq = _entry.get("quality", 0)
-            _llabel = f"{_lmode_icon} {_ltitle} · {_lts} · Q{_lq}"
+            _llabel = f"{_lmode_icon} {_ltitle} · {_lts}"
 
             if st.button(_llabel, key=f"plog_{_real_idx}", use_container_width=True):
                 st.session_state._prompt_to_apply = _entry["full_prompt"]
@@ -1390,7 +1398,7 @@ with st.sidebar:
     st.markdown("### 🔑 My API Keys")
     _user_keys = st.session_state.user_keys
     _active_count = sum(1 for k in _user_keys if k["is_active"])
-    st.caption(f"{_active_count} of {MAX_ACTIVE_KEYS} active · {len(_user_keys)} stored")
+    st.caption(f"{_active_count} of {MAX_ACTIVE_KEYS} active · {len(_user_keys)} key{'s' if len(_user_keys) != 1 else ''} stored")
 
 
     for _k in _user_keys:
@@ -1419,7 +1427,7 @@ with st.sidebar:
                 st.session_state.user_keys = get_keys(_user_id)
                 st.rerun()
 
-    if len(_user_keys) < MAX_STORED_KEYS:
+    if True:
         # Form generation counter — incremented on save to reset all widget values
         if "add_key_form_gen" not in st.session_state:
             st.session_state.add_key_form_gen = 0
@@ -1489,8 +1497,6 @@ with st.sidebar:
                             st.error(str(_e))
                     else:
                         st.error(f"❌ Key test failed: {_msg}")
-    else:
-        st.info(f"Storage limit of {MAX_STORED_KEYS} keys reached. Delete some to add new ones.")
 
     st.markdown("---")
     st.markdown("### 👷 Architects")
@@ -1655,7 +1661,7 @@ def _render_diagnostic_section(analysis, user_prompt):
                     original_analysis = analyse_prompt(user_prompt)
                     if not st.session_state.query_history or st.session_state.query_history[-1]["full_prompt"] != user_prompt:
                         _ref_entry = {
-                            "timestamp": time.strftime("%H:%M:%S"),
+                            "timestamp": datetime.now().strftime("%d.%m.%Y · %H:%M:%S"),
                             "summary": summarise_prompt(user_prompt),
                             "prompt": user_prompt[:120] + ("…" if len(user_prompt) > 120 else ""),
                             "full_prompt": user_prompt,

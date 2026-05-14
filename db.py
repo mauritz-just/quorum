@@ -157,10 +157,8 @@ def load_history(user_id, limit=50):
         # Format timestamp: show date+time for past sessions, just time for today
         ts_full = d.get("created_at", "")
         try:
-            from datetime import date
-            ts_date = ts_full[:10]
-            today = date.today().isoformat()
-            ts_display = ts_full[11:19] if ts_date == today else ts_full[:16]
+            from datetime import datetime as _dt
+            ts_display = _dt.strptime(ts_full[:19], "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y · %H:%M:%S")
         except Exception:
             ts_display = ts_full[:16]
         try:
@@ -340,10 +338,8 @@ def load_project_entries(user_id, project_id, limit=100):
         d = dict(row)
         ts_full = d.get("created_at", "")
         try:
-            from datetime import date
-            ts_date = ts_full[:10]
-            today = date.today().isoformat()
-            ts_display = ts_full[11:19] if ts_date == today else ts_full[:16]
+            from datetime import datetime as _dt
+            ts_display = _dt.strptime(ts_full[:19], "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y · %H:%M:%S")
         except Exception:
             ts_display = ts_full[:16]
         try:

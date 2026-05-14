@@ -79,7 +79,7 @@ PROVIDER_PRESETS = {
 }
 
 MAX_ACTIVE_KEYS = 4   # max simultaneously active models
-MAX_STORED_KEYS = 50  # max total keys in storage
+MAX_STORED_KEYS = None  # no storage limit
 MAX_KEYS_PER_USER = MAX_ACTIVE_KEYS  # backward-compat alias
 
 # ──────────────────────────────────────────────
@@ -179,10 +179,6 @@ def save_key(user_id, provider_name, display_name, plaintext_key, model_id, endp
     The new key is saved as active if the user is below MAX_ACTIVE_KEYS, otherwise inactive.
     """
     all_keys = get_keys(user_id)
-
-    # Storage limit
-    if len(all_keys) >= MAX_STORED_KEYS:
-        raise ValueError(f"Storage limit of {MAX_STORED_KEYS} keys reached. Delete some first.")
 
     # Duplicate display name (case-insensitive, whitespace-normalised)
     norm_alias = (display_name or provider_name).strip().lower()
