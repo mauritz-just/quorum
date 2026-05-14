@@ -17,7 +17,6 @@ Run:  streamlit run appv11.py
 """
 
 import streamlit as st
-import streamlit.components.v1 as _components
 import requests
 import json
 import time
@@ -1456,28 +1455,6 @@ with st.sidebar:
     _active_count = sum(1 for k in _user_keys if k["is_active"])
     st.caption(f"{_active_count} of {MAX_ACTIVE_KEYS} active · {len(_user_keys)} stored")
 
-    # Inject JS to prevent Safari/browser password-manager autofill on all password inputs
-    _components.html("""
-<script>
-(function() {
-    function patch() {
-        var inputs = window.parent.document.querySelectorAll('input[type="password"]');
-        inputs.forEach(function(el) {
-            if (!el.dataset.quorumPatched) {
-                el.setAttribute('autocomplete', 'one-time-code');
-                el.setAttribute('data-form-type', 'other');
-                el.setAttribute('data-lpignore', 'true');
-                el.setAttribute('data-1p-ignore', 'true');
-                el.dataset.quorumPatched = '1';
-            }
-        });
-    }
-    var observer = new MutationObserver(patch);
-    observer.observe(window.parent.document.body, { childList: true, subtree: true });
-    patch();
-})();
-</script>
-""", height=0, scrolling=False)
 
     for _k in _user_keys:
         _preset = PROVIDER_PRESETS.get(_k["provider_name"], {})
@@ -1525,7 +1502,26 @@ with st.sidebar:
             if not _endpoint:
                 _endpoint = st.text_input("Endpoint URL", key=f"new_key_endpoint_{_gen}")
             _display_name = st.text_input("Display name (optional)", key=f"new_key_display_{_gen}")
-            _api_key_input = st.text_input("API Key", type="password", key=f"new_key_value_{_gen}")
+
+            # API Key field: plain text type prevents Safari/iCloud Keychain "Strong Password" autofill.
+            # When hidden, CSS visually masks the characters by targeting the aria-label.
+            _show_key = st.toggle("👁 Show key", value=False, key=f"show_new_key_{_gen}")
+            if not _show_key:
+                st.markdown("""
+                <style>
+                  div[data-testid="stTextInput"] input[aria-label="API Key"] {
+                    -webkit-text-security: disc !important;
+                    -moz-text-security: disc !important;
+                    text-security: disc !important;
+                  }
+                </style>
+                """, unsafe_allow_html=True)
+            _api_key_input = st.text_input(
+                "API Key",
+                type="default",
+                key=f"new_key_value_{_gen}",
+                placeholder="Paste your API key here",
+            )
 
             # Real-time duplicate name check
             if _display_name.strip():
