@@ -30,7 +30,7 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quorumai.db"
 PROVIDER_PRESETS = {
     "OpenAI": {
         "endpoint": "https://api.openai.com/v1/chat/completions",
-        "models": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "o4-mini"],
+        "models": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "o4-mini", "o5-mini"],
         "api_type": "openai_compat",
         "icon": "🟢",
     },
@@ -251,7 +251,7 @@ def delete_key(user_id, key_id):
 
 
 def toggle_key(user_id, key_id):
-    """Toggle a key's is_active status. Raises ValueError when enabling would exceed MAX_ACTIVE_KEYS."""
+    """Toggle a key's is_active status. No limit on how many can be active."""
     conn = _get_conn()
     cursor = conn.cursor()
     cursor.execute("SELECT is_active FROM api_keys WHERE id = ? AND user_id = ?", (key_id, user_id))
@@ -259,12 +259,6 @@ def toggle_key(user_id, key_id):
     if not row:
         conn.close()
         return
-    currently_active = row["is_active"]
-    if not currently_active:
-        active_count = count_active_keys(user_id)
-        if active_count >= MAX_ACTIVE_KEYS:
-            conn.close()
-            raise ValueError(f"Maximum of {MAX_ACTIVE_KEYS} active models reached. Pause one first.")
     conn.execute(
         "UPDATE api_keys SET is_active = CASE WHEN is_active = 1 THEN 0 ELSE 1 END WHERE id = ? AND user_id = ?",
         (key_id, user_id),

@@ -83,6 +83,18 @@ FALLBACK_MODELS = {
     },
 }
 
+# Add OpenAI o5-mini if API key is configured
+if os.getenv("OPENAI_API_KEY"):
+    FALLBACK_MODELS["OpenAI · o5-mini"] = {
+        "api_key": os.getenv("OPENAI_API_KEY", ""),
+        "endpoint": "https://api.openai.com/v1/chat/completions",
+        "model_id": "o5-mini",
+        "type": "openai_compat",
+        "icon": "🟢",
+        "color": "#10A37F",
+        "provider": "OpenAI",
+    }
+
 # ──────────────────────────────────────────────
 # 1b · AGGREGATOR FALLBACK via OpenRouter
 # ──────────────────────────────────────────────
@@ -99,6 +111,14 @@ MODELS = dict(FALLBACK_MODELS)
 # ──────────────────────────────────────────────
 # 2 · PROMPT ANALYZER  (Architecture Layer 2)
 # ──────────────────────────────────────────────
+
+def _smart_truncate(text: str, max_len: int = 55) -> str:
+    """Truncate at word boundary, appending ellipsis."""
+    if len(text) <= max_len:
+        return text
+    truncated = text[:max_len - 1].rsplit(" ", 1)[0]
+    return truncated + "…"
+
 
 class PromptAnalyzer:
     """
@@ -1211,7 +1231,46 @@ st.markdown("""
 
 st.markdown('<div class="top-bar"><h1>🏟️ QuorumAI — Model Arena & Aggregator</h1><span>Multi-LLM Aggregation Platform · Compare · Synthesise · Decide</span></div>', unsafe_allow_html=True)
 
-# ── Sidebar ──
+# ── Value Proposition + Architects (popover top-right) ──
+_VP_TEXT = (
+    "Our tool earns a spot in your daily workflow for one of three reasons. "
+    "**Cross-verification** for students and researchers. "
+    "**Best answer, guaranteed** for professionals. "
+    "**Cost efficiency** for companies with multiple AI subscriptions. "
+    "We run all models **in parallel**, add a **synthesis layer** with confidence scores, "
+    "make **disagreement transparent**, and do it all in **one prompt box**."
+)
+_VP_ARCHITECTS = "1. Jan Schützenmeister\n2. Mauritz Just\n3. Leandra Sühling\n4. Malin Minten"
+_, _vp_btn_col = st.columns([5, 1])
+with _vp_btn_col:
+    if hasattr(st, "popover"):
+        with st.popover("💡 About", use_container_width=True):
+            st.markdown(_VP_TEXT)
+            st.markdown("---")
+            st.markdown("**Architects**")
+            st.markdown(_VP_ARCHITECTS)
+    else:
+        with st.expander("💡 About"):
+            st.markdown(_VP_TEXT)
+            st.markdown("---")
+            st.markdown("**Architects**")
+            st.markdown(_VP_ARCHITECTS)
+
+# ── Settings / generation defaults (must be above sidebar) ──
+if "show_settings" not in st.session_state:
+    st.session_state.show_settings = False
+
+for key, default in [("s_max_tokens", 1024), ("s_temperature", 0.7), ("s_timeout", 240), ("s_show_analysis", True)]:
+    if key not in st.session_state:
+        st.session_state[key] = default
+
+def _save(src, dst):
+    st.session_state[dst] = st.session_state[src]
+
+def _save_meta():
+    st.session_state.s_meta_prompt = st.session_state["_w_meta_prompt"]
+    save_meta_prompt(_user_id, st.session_state.s_meta_prompt)
+
 with st.sidebar:
     # ── User info ──
     _ava_col, _info_col = st.columns([1, 3])
@@ -1227,33 +1286,26 @@ with st.sidebar:
     if st.button("🚪 Sign out", use_container_width=True, key="signout_btn"):
         logout()
         st.rerun()
-    st.markdown("---")
-
-    mode = st.radio("Mode", ["🏟️ Arena (side-by-side)", "🧠 Aggregator (synthesised)"], index=0)
-    st.markdown("---")
-    if "show_settings" not in st.session_state:
-        st.session_state.show_settings = False
-    if st.button("✕ Close Settings" if st.session_state.show_settings else "⚙️ Settings", use_container_width=True, key="settings_toggle"):
+    if st.button("✕ Close Settings" if st.session_state.show_settings else "⚙️ Settings",
+                 use_container_width=True, key="settings_toggle"):
         st.session_state.show_settings = not st.session_state.show_settings
         st.rerun()
 
-    for key, default in [("s_max_tokens", 1024), ("s_temperature", 0.7), ("s_timeout", 240), ("s_show_analysis", True)]:
-        if key not in st.session_state:
-            st.session_state[key] = default
-
-    def _save(src, dst):
-        st.session_state[dst] = st.session_state[src]
-
     if st.session_state.show_settings:
-        st.markdown("### 🛠️ Generation Settings")
-        st.slider("Max response length (tokens)", 100, 5000, st.session_state.s_max_tokens, 100, key="_w_mt", on_change=lambda: _save("_w_mt", "s_max_tokens"))
-        st.slider("Temperature (creativity)", 0.0, 1.5, st.session_state.s_temperature, 0.1, key="_w_temp", on_change=lambda: _save("_w_temp", "s_temperature"))
-        st.slider("Timeout per model (seconds)", 30, 600, st.session_state.s_timeout, 30, key="_w_to", on_change=lambda: _save("_w_to", "s_timeout"))
-        st.toggle("Show Prompt Analysis", value=st.session_state.s_show_analysis, key="_w_sa", on_change=lambda: _save("_w_sa", "s_show_analysis"))
-        def _save_meta():
-            st.session_state.s_meta_prompt = st.session_state["_w_meta_prompt"]
-            save_meta_prompt(_user_id, st.session_state.s_meta_prompt)
+        # ── SETTINGS PANEL ──
+        mode = st.session_state.get("_last_mode", "🏟️ Arena (side-by-side)")
+        selected_models = st.session_state.get("_last_selected_models", [])
 
+        st.markdown("---")
+        st.markdown("### 🛠️ Generation Settings")
+        st.slider("Max response length (tokens)", 100, 5000, st.session_state.s_max_tokens, 100,
+                  key="_w_mt", on_change=lambda: _save("_w_mt", "s_max_tokens"))
+        st.slider("Temperature (creativity)", 0.0, 1.5, st.session_state.s_temperature, 0.1,
+                  key="_w_temp", on_change=lambda: _save("_w_temp", "s_temperature"))
+        st.slider("Timeout per model (seconds)", 30, 600, st.session_state.s_timeout, 30,
+                  key="_w_to", on_change=lambda: _save("_w_to", "s_timeout"))
+        st.toggle("Show Prompt Analysis", value=st.session_state.s_show_analysis,
+                  key="_w_sa", on_change=lambda: _save("_w_sa", "s_show_analysis"))
         st.text_area(
             "Meta-prompt (prepended to every broadcast)",
             value=st.session_state.s_meta_prompt,
@@ -1262,181 +1314,44 @@ with st.sidebar:
             placeholder="e.g. Always respond in German. Be concise. Use bullet points.",
             on_change=_save_meta,
         )
+
         st.markdown("---")
+        st.markdown("### 🔑 My API Keys")
+        _user_keys = st.session_state.user_keys
+        _stored_count = len(_user_keys)
+        _active_key_count = sum(1 for k in _user_keys if k["is_active"])
+        st.caption(f"{_stored_count} key{'s' if _stored_count != 1 else ''} stored · {_active_key_count} active")
 
-    max_tokens = st.session_state.s_max_tokens
-    temperature = st.session_state.s_temperature
-    timeout_sec = st.session_state.s_timeout
-    show_prompt_analysis = st.session_state.s_show_analysis
-
-    # ── Model Roles ──
-    st.markdown("---")
-    st.markdown("### 🎛️ Model Roles")
-    _role_options = ["(auto)"] + list(MODELS.keys())
-    if "s_aggregator_model" not in st.session_state:
-        st.session_state.s_aggregator_model = "(auto)"
-    if "s_analyzer_model" not in st.session_state:
-        st.session_state.s_analyzer_model = "(auto)"
-    _agg_idx = _role_options.index(st.session_state.s_aggregator_model) if st.session_state.s_aggregator_model in _role_options else 0
-    _ana_idx = _role_options.index(st.session_state.s_analyzer_model) if st.session_state.s_analyzer_model in _role_options else 0
-    st.session_state.s_aggregator_model = st.selectbox(
-        "Aggregator Model", _role_options, index=_agg_idx, key="agg_model_sel",
-        help="Model used to synthesise responses in Aggregator mode"
-    )
-    st.session_state.s_analyzer_model = st.selectbox(
-        "Analyzer Model", _role_options, index=_ana_idx, key="ana_model_sel",
-        help="Model used to rewrite prompts when you click Refine"
-    )
-
-    st.markdown("### 🤖 Output Models")
-    st.caption(f"Select up to {MAX_ACTIVE_KEYS} models to receive your prompt:")
-    _all_model_names = list(MODELS.keys())
-
-    # Default selection on first render: first N models checked.
-    for _idx, _name in enumerate(_all_model_names):
-        _ckey = f"chk_{_name}"
-        if _ckey not in st.session_state:
-            st.session_state[_ckey] = (_idx < MAX_ACTIVE_KEYS)
-
-    # Enforce limit: if legacy session state has more than MAX_ACTIVE_KEYS checked, uncheck the extras.
-    _checked_now = [n for n in _all_model_names if st.session_state.get(f"chk_{n}", False)]
-    if len(_checked_now) > MAX_ACTIVE_KEYS:
-        for _name in _checked_now[MAX_ACTIVE_KEYS:]:
-            st.session_state[f"chk_{_name}"] = False
-
-    # Active count from current widget state — used to disable further checks when at limit.
-    _live_active_count = sum(1 for n in _all_model_names if st.session_state.get(f"chk_{n}", False))
-    _at_max = _live_active_count >= MAX_ACTIVE_KEYS
-
-    selected_models = []
-    for _name, _cfg in MODELS.items():
-        _is_active = st.session_state.get(f"chk_{_name}", False)
-        _disabled = _at_max and not _is_active
-        _label = f"{_cfg['icon']} {_name}"
-        _help = f"Pause an active model first (max {MAX_ACTIVE_KEYS})" if _disabled else None
-        if st.checkbox(_label, key=f"chk_{_name}", disabled=_disabled, help=_help):
-            selected_models.append(_name)
-
-    if not selected_models:
-        st.error("Select at least 1 model.")
-    else:
-        st.caption(f"{len(selected_models)} of {len(MODELS)} models active")
-
-    st.markdown("---")
-    if "s_show_value_prop" not in st.session_state:
-        st.session_state.s_show_value_prop = False
-    st.session_state.s_show_value_prop = st.toggle("💡 Show Value Proposition", value=st.session_state.s_show_value_prop)
-    if st.session_state.s_show_value_prop:
-        st.markdown("Our tool earns a spot in your daily workflow for one of three reasons. **Cross-verification** for students and researchers. **Best answer, guaranteed** for professionals. **Cost efficiency** for companies with multiple AI subscriptions. We run all models **in parallel**, add a **synthesis layer** with confidence scores, make **disagreement transparent**, and do it all in **one prompt box**.")
-
-    # ── Prompt Log ──
-    st.markdown("---")
-    st.markdown("### 📜 Prompt Log")
-
-    _log = st.session_state.get("query_history") or []
-    if not _log:
-        st.caption("No runs yet — submit a prompt to get started.")
-    else:
-        for _lidx, _entry in enumerate(reversed(_log)):
-            _real_idx = len(_log) - 1 - _lidx
-            _lmode = _entry.get("mode", "")
-            _lmode_icon = "🏟️" if _lmode == "Arena" else ("🧠" if _lmode == "Aggregator" else "✨")
-            _ltitle = (_entry.get("summary") or _entry.get("prompt") or "Query")[:55]
-            _lts = _entry.get("timestamp", "")
-            _lq = _entry.get("quality", 0)
-            _llabel = f"{_lmode_icon} {_ltitle} · {_lts}"
-
-            if st.button(_llabel, key=f"plog_{_real_idx}", use_container_width=True):
-                st.session_state._prompt_to_apply = _entry["full_prompt"]
-                st.session_state.refinement_history = []
-                st.session_state.last_analysis = _entry.get("analysis")
-
-                # Rebuild full results list (successes + errors + timing)
-                _resp  = _entry.get("responses") or {}
-                _errs  = _entry.get("errors") or {}
-                _times = _entry.get("times") or {}
-                _wcs   = _entry.get("word_counts") or {}
-                _all_models = _entry.get("models_used") or list(_resp.keys())
-                _has_timing = bool(_times and any(v and v > 0 for v in _times.values()))
-
-                _entry_results = []
-                for _mname in _all_models:
-                    _entry_results.append({
-                        "name":     _mname,
-                        "response": _resp.get(_mname),
-                        "error":    _errs.get(_mname),
-                        "time":     _times.get(_mname, 0),
-                        "words":    _wcs.get(_mname) or len((_resp.get(_mname) or "").split()),
-                    })
-
-                _syn = _entry.get("synthesis")
-                st.session_state.broadcast_output = {
-                    "synthesis":    _syn,
-                    "results":      _entry_results,
-                    "mode":         _entry.get("mode", "Aggregator"),
-                    "prompt":       _entry["full_prompt"],
-                    "quality":      _entry.get("quality", 0),
-                    "complexity":   _entry.get("complexity", ""),
-                    "n_models":     len(_entry_results),
-                    "has_timing":   _has_timing,
-                    "from_history": True,
-                    "timestamp":    _entry.get("timestamp", ""),
-                    "summary":      _entry.get("summary", ""),
-                } if (_entry_results or _syn) else None
-                st.rerun()
-
-    st.markdown("")
-    if _log:
-        if st.button("🗑️ Clear Prompt Log", use_container_width=True, key="clear_prompt_log"):
-            clear_history(_user_id)
-            st.session_state.query_history = []
-            st.session_state.broadcast_output = None
-            st.rerun()
-
-    # ── API Key Management ──
-    st.markdown("---")
-    st.markdown("### 🔑 My API Keys")
-    _user_keys = st.session_state.user_keys
-    _active_count = sum(1 for k in _user_keys if k["is_active"])
-    st.caption(f"{_active_count} of {MAX_ACTIVE_KEYS} active · {len(_user_keys)} key{'s' if len(_user_keys) != 1 else ''} stored")
-
-
-    for _k in _user_keys:
-        _preset = PROVIDER_PRESETS.get(_k["provider_name"], {})
-        _icon = _preset.get("icon", "🔑")
-        _kc1, _kc2, _kc3 = st.columns([4, 1, 1])
-        with _kc1:
-            _status = "✅" if _k["is_active"] else "⏸"
-            _pretty = build_key_display_name(_k["display_name"], _k["provider_name"], _k["model_id"])
-            st.markdown(f"{_icon} **{_pretty}** {_status}")
-            st.caption(f"`{_k['masked_key']}`")
-        with _kc2:
-            _can_enable = _k["is_active"] or _active_count < MAX_ACTIVE_KEYS
-            _tog_label = "Pause" if _k["is_active"] else ("Enable" if _can_enable else f"Pause one first")
-            if st.button("⏸" if _k["is_active"] else "▶", key=f"tog_{_k['id']}",
-                         help=_tog_label, disabled=not _can_enable):
-                try:
-                    toggle_key(_user_id, _k["id"])
+        for _k in _user_keys:
+            _preset_k = PROVIDER_PRESETS.get(_k["provider_name"], {})
+            _icon_k = _preset_k.get("icon", "🔑")
+            _kc1, _kc2, _kc3 = st.columns([4, 1, 1])
+            with _kc1:
+                _status_k = "✅" if _k["is_active"] else "⏸"
+                _pretty_k = build_key_display_name(_k["display_name"], _k["provider_name"], _k["model_id"])
+                st.markdown(f"{_icon_k} **{_pretty_k}** {_status_k}")
+                st.caption(f"`{_k['masked_key']}`")
+            with _kc2:
+                _tog_lbl = "Pause" if _k["is_active"] else "Enable"
+                if st.button("⏸" if _k["is_active"] else "▶", key=f"tog_{_k['id']}",
+                             help=_tog_lbl):
+                    try:
+                        toggle_key(_user_id, _k["id"])
+                        st.session_state.user_keys = get_keys(_user_id)
+                        st.rerun()
+                    except ValueError as _e:
+                        st.error(str(_e))
+            with _kc3:
+                if st.button("🗑", key=f"del_{_k['id']}", help="Delete key"):
+                    delete_key(_user_id, _k["id"])
                     st.session_state.user_keys = get_keys(_user_id)
                     st.rerun()
-                except ValueError as _e:
-                    st.error(str(_e))
-        with _kc3:
-            if st.button("🗑", key=f"del_{_k['id']}", help="Delete key"):
-                delete_key(_user_id, _k["id"])
-                st.session_state.user_keys = get_keys(_user_id)
-                st.rerun()
 
-    if True:
-        # Form generation counter — incremented on save to reset all widget values
         if "add_key_form_gen" not in st.session_state:
             st.session_state.add_key_form_gen = 0
         _gen = st.session_state.add_key_form_gen
 
         with st.expander("➕ Add API Key"):
-            if _active_count >= MAX_ACTIVE_KEYS:
-                st.info("5 models are already active. This key will be saved as inactive — enable it by pausing another.")
-
             _provider = st.selectbox("Provider", list(PROVIDER_PRESETS.keys()), key=f"new_key_provider_{_gen}")
             _preset_cfg = PROVIDER_PRESETS[_provider]
             if _preset_cfg["models"]:
@@ -1448,8 +1363,6 @@ with st.sidebar:
                 _endpoint = st.text_input("Endpoint URL", key=f"new_key_endpoint_{_gen}")
             _display_name = st.text_input("Display name (optional)", key=f"new_key_display_{_gen}")
 
-            # API Key field: plain text type prevents Safari/iCloud Keychain "Strong Password" autofill.
-            # When hidden, CSS visually masks the characters by targeting the aria-label.
             _show_key = st.toggle("👁 Show key", value=False, key=f"show_new_key_{_gen}")
             if not _show_key:
                 st.markdown("""
@@ -1468,7 +1381,6 @@ with st.sidebar:
                 placeholder="Paste your API key here",
             )
 
-            # Real-time duplicate name check
             if _display_name.strip():
                 _norm = _display_name.strip().lower()
                 _dupe_name = any(
@@ -1498,9 +1410,157 @@ with st.sidebar:
                     else:
                         st.error(f"❌ Key test failed: {_msg}")
 
-    st.markdown("---")
-    st.markdown("### 👷 Architects")
-    st.caption("1. Jan Schützenmeister\n\n2. Mauritz Horst Friedrich Just")
+    else:
+        # ── NORMAL SIDEBAR CONTENT ──
+        st.markdown("---")
+        mode = st.radio("Mode", ["🏟️ Arena (side-by-side)", "🧠 Aggregator (synthesised)"],
+                        index=0, key="mode_radio")
+        st.session_state._last_mode = mode
+        st.markdown("---")
+
+        # ── Model Roles ──
+        st.markdown("### 🎛️ Model Roles")
+        _role_options = ["(auto)"] + list(MODELS.keys())
+
+        def _default_role_model():
+            for _rn in MODELS:
+                if "o5-mini" in _rn or MODELS[_rn].get("model_id", "") == "o5-mini":
+                    return _rn
+            return "(auto)"
+
+        if "s_analyzer_model" not in st.session_state:
+            st.session_state.s_analyzer_model = _default_role_model()
+        if "s_aggregator_model" not in st.session_state:
+            st.session_state.s_aggregator_model = _default_role_model()
+
+        _ana_idx = _role_options.index(st.session_state.s_analyzer_model) if st.session_state.s_analyzer_model in _role_options else 0
+        _agg_idx = _role_options.index(st.session_state.s_aggregator_model) if st.session_state.s_aggregator_model in _role_options else 0
+        st.session_state.s_analyzer_model = st.selectbox(
+            "Prompt Analyzer Model", _role_options, index=_ana_idx, key="ana_model_sel",
+            help="Model used to rewrite prompts when you click Refine"
+        )
+        st.session_state.s_aggregator_model = st.selectbox(
+            "Aggregator Model", _role_options, index=_agg_idx, key="agg_model_sel",
+            help="Model used to synthesise responses in Aggregator mode"
+        )
+
+        # ── Output Models ──
+        st.markdown("### 🤖 Output Models")
+        st.caption(f"Select up to {MAX_ACTIVE_KEYS} models to receive your prompt:")
+        _all_model_names = list(MODELS.keys())
+        _standard_names = [n for n in _all_model_names if n in FALLBACK_MODELS]
+        _added_names = [n for n in _all_model_names if n not in FALLBACK_MODELS]
+
+        for _idx, _name in enumerate(_all_model_names):
+            _ckey = f"chk_{_name}"
+            if _ckey not in st.session_state:
+                st.session_state[_ckey] = (_idx < MAX_ACTIVE_KEYS)
+
+        _checked_now = [n for n in _all_model_names if st.session_state.get(f"chk_{n}", False)]
+        if len(_checked_now) > MAX_ACTIVE_KEYS:
+            for _xname in _checked_now[MAX_ACTIVE_KEYS:]:
+                st.session_state[f"chk_{_xname}"] = False
+
+        _live_active_count = sum(1 for n in _all_model_names if st.session_state.get(f"chk_{n}", False))
+        _at_max = _live_active_count >= MAX_ACTIVE_KEYS
+
+        selected_models = []
+
+        if _standard_names:
+            st.caption("**Standard Models**")
+            for _name in _standard_names:
+                _cfg = MODELS[_name]
+                _is_active = st.session_state.get(f"chk_{_name}", False)
+                _disabled = _at_max and not _is_active
+                _help = f"Max {MAX_ACTIVE_KEYS} at once — deselect one first" if _disabled else None
+                if st.checkbox(f"{_cfg['icon']} {_name}", key=f"chk_{_name}", disabled=_disabled, help=_help):
+                    selected_models.append(_name)
+
+        if _added_names:
+            st.caption("**Added Models**")
+            for _name in _added_names:
+                _cfg = MODELS[_name]
+                _is_active = st.session_state.get(f"chk_{_name}", False)
+                _disabled = _at_max and not _is_active
+                _help = f"Max {MAX_ACTIVE_KEYS} at once — deselect one first" if _disabled else None
+                if st.checkbox(f"{_cfg['icon']} {_name}", key=f"chk_{_name}", disabled=_disabled, help=_help):
+                    selected_models.append(_name)
+
+        if not selected_models:
+            st.error("Select at least 1 model.")
+        else:
+            st.caption(f"{len(selected_models)} of {len(_all_model_names)} models selected")
+
+        st.session_state._last_selected_models = selected_models
+
+        # ── Prompt Log ──
+        st.markdown("---")
+        st.markdown("### 📜 Prompt Log")
+
+        _log = st.session_state.get("query_history") or []
+        if not _log:
+            st.caption("No runs yet — submit a prompt to get started.")
+        else:
+            for _lidx, _entry in enumerate(reversed(_log)):
+                _real_idx = len(_log) - 1 - _lidx
+                _lmode = _entry.get("mode", "")
+                _lmode_icon = "🏟️" if _lmode == "Arena" else ("🧠" if _lmode == "Aggregator" else "✨")
+                _raw_title = (_entry.get("summary") or _entry.get("prompt") or "Query")
+                _ltitle = _smart_truncate(_raw_title, 55)
+                _lts = _entry.get("timestamp", "")
+                _llabel = f"{_lmode_icon} {_ltitle} · {_lts}"
+
+                if st.button(_llabel, key=f"plog_{_real_idx}", use_container_width=True):
+                    st.session_state._prompt_to_apply = _entry["full_prompt"]
+                    st.session_state.refinement_history = []
+                    st.session_state.last_analysis = _entry.get("analysis")
+
+                    _resp  = _entry.get("responses") or {}
+                    _errs  = _entry.get("errors") or {}
+                    _times = _entry.get("times") or {}
+                    _wcs   = _entry.get("word_counts") or {}
+                    _all_models = _entry.get("models_used") or list(_resp.keys())
+                    _has_timing = bool(_times and any(v and v > 0 for v in _times.values()))
+
+                    _entry_results = []
+                    for _mname in _all_models:
+                        _entry_results.append({
+                            "name":     _mname,
+                            "response": _resp.get(_mname),
+                            "error":    _errs.get(_mname),
+                            "time":     _times.get(_mname, 0),
+                            "words":    _wcs.get(_mname) or len((_resp.get(_mname) or "").split()),
+                        })
+
+                    _syn = _entry.get("synthesis")
+                    st.session_state.broadcast_output = {
+                        "synthesis":    _syn,
+                        "results":      _entry_results,
+                        "mode":         _entry.get("mode", "Aggregator"),
+                        "prompt":       _entry["full_prompt"],
+                        "quality":      _entry.get("quality", 0),
+                        "complexity":   _entry.get("complexity", ""),
+                        "n_models":     len(_entry_results),
+                        "has_timing":   _has_timing,
+                        "from_history": True,
+                        "timestamp":    _entry.get("timestamp", ""),
+                        "summary":      _entry.get("summary", ""),
+                    } if (_entry_results or _syn) else None
+                    st.rerun()
+
+        st.markdown("")
+        if _log:
+            if st.button("🗑️ Clear Prompt Log", use_container_width=True, key="clear_prompt_log"):
+                clear_history(_user_id)
+                st.session_state.query_history = []
+                st.session_state.broadcast_output = None
+                st.rerun()
+
+# ── Resolve settings vars from session_state (used throughout main area) ──
+max_tokens = st.session_state.s_max_tokens
+temperature = st.session_state.s_temperature
+timeout_sec = st.session_state.s_timeout
+show_prompt_analysis = st.session_state.s_show_analysis
 
 # ── Main Area ──
 for key, default in [
@@ -1777,7 +1837,7 @@ if broadcast_clicked and user_prompt.strip():
     # ── Save run to Prompt Log (query_history) ──
     _summary_text = summarise_prompt(user_prompt)
     history_entry = {
-        "timestamp":        time.strftime("%H:%M:%S"),
+        "timestamp":        datetime.now().strftime("%d.%m.%Y · %H:%M:%S"),
         "summary":          _summary_text,
         "prompt":           user_prompt[:120] + ("…" if len(user_prompt) > 120 else ""),
         "full_prompt":      user_prompt,
