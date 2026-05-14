@@ -17,6 +17,7 @@ Run:  streamlit run appv11.py
 """
 
 import streamlit as st
+import streamlit.components.v1 as _components
 import requests
 import json
 import time
@@ -37,8 +38,9 @@ from db import (init_db, save_history_entry, load_history, clear_history,
 from auth import require_auth, logout
 from key_manager import (
     get_keys, build_models_dict, save_key, delete_key,
-    toggle_key, test_key, PROVIDER_PRESETS, MAX_KEYS_PER_USER,
-    count_active_keys, mask_key,
+    toggle_key, test_key, PROVIDER_PRESETS,
+    MAX_ACTIVE_KEYS, MAX_STORED_KEYS, MAX_KEYS_PER_USER,
+    count_active_keys, mask_key, build_key_display_name,
 )
 
 # ──────────────────────────────────────────────
@@ -1280,17 +1282,31 @@ with st.sidebar:
     )
 
     st.markdown("### 🤖 Output Models")
-    st.caption("Toggle which models receive your prompt (max 5):")
-    selected_models = []
-    for name, cfg in MODELS.items():
-        label = f"{cfg['icon']} {name}"
-        if st.checkbox(label, value=True, key=f"chk_{name}"):
-            selected_models.append(name)
+    _all_model_names = list(MODELS.keys())
+
+    # Initialise and keep valid (models may appear/disappear as keys are toggled)
+    if "active_model_selection" not in st.session_state:
+        st.session_state.active_model_selection = _all_model_names[:min(MAX_ACTIVE_KEYS, len(_all_model_names))]
+    else:
+        st.session_state.active_model_selection = [
+            m for m in st.session_state.active_model_selection if m in MODELS
+        ]
+        # Add new models up to the limit when the list grows
+        if not st.session_state.active_model_selection:
+            st.session_state.active_model_selection = _all_model_names[:min(MAX_ACTIVE_KEYS, len(_all_model_names))]
+
+    selected_models = st.multiselect(
+        f"Active models (max {MAX_ACTIVE_KEYS}):",
+        options=_all_model_names,
+        default=st.session_state.active_model_selection,
+        key="model_multiselect",
+        format_func=lambda n: f"{MODELS[n]['icon']} {n}",
+        max_selections=MAX_ACTIVE_KEYS,
+    )
+    st.session_state.active_model_selection = selected_models
+
     if not selected_models:
         st.error("Select at least 1 model.")
-    elif len(selected_models) > 5:
-        st.warning("Max 5 models — only the first 5 will be used.")
-        selected_models = selected_models[:5]
     else:
         st.caption(f"{len(selected_models)} of {len(MODELS)} models active")
 
@@ -1438,7 +1454,30 @@ with st.sidebar:
     st.markdown("### 🔑 My API Keys")
     _user_keys = st.session_state.user_keys
     _active_count = sum(1 for k in _user_keys if k["is_active"])
-    st.caption(f"{_active_count} of {MAX_KEYS_PER_USER} slots used")
+    st.caption(f"{_active_count} of {MAX_ACTIVE_KEYS} active · {len(_user_keys)} stored")
+
+    # Inject JS to prevent Safari/browser password-manager autofill on all password inputs
+    _components.html("""
+<script>
+(function() {
+    function patch() {
+        var inputs = window.parent.document.querySelectorAll('input[type="password"]');
+        inputs.forEach(function(el) {
+            if (!el.dataset.quorumPatched) {
+                el.setAttribute('autocomplete', 'one-time-code');
+                el.setAttribute('data-form-type', 'other');
+                el.setAttribute('data-lpignore', 'true');
+                el.setAttribute('data-1p-ignore', 'true');
+                el.dataset.quorumPatched = '1';
+            }
+        });
+    }
+    var observer = new MutationObserver(patch);
+    observer.observe(window.parent.document.body, { childList: true, subtree: true });
+    patch();
+})();
+</script>
+""", height=0, scrolling=False)
 
     for _k in _user_keys:
         _preset = PROVIDER_PRESETS.get(_k["provider_name"], {})
@@ -1446,34 +1485,59 @@ with st.sidebar:
         _kc1, _kc2, _kc3 = st.columns([4, 1, 1])
         with _kc1:
             _status = "✅" if _k["is_active"] else "⏸"
-            st.markdown(f"{_icon} **{_k['display_name'] or _k['provider_name']}** {_status}")
-            st.caption(f"`{_k['masked_key']}` · {_k['model_id']}")
+            _pretty = build_key_display_name(_k["display_name"], _k["provider_name"], _k["model_id"])
+            st.markdown(f"{_icon} **{_pretty}** {_status}")
+            st.caption(f"`{_k['masked_key']}`")
         with _kc2:
-            _tog_label = "Pause" if _k["is_active"] else "Enable"
-            if st.button("⏸" if _k["is_active"] else "▶", key=f"tog_{_k['id']}", help=_tog_label):
-                toggle_key(_user_id, _k["id"])
-                st.session_state.user_keys = get_keys(_user_id)
-                st.rerun()
+            _can_enable = _k["is_active"] or _active_count < MAX_ACTIVE_KEYS
+            _tog_label = "Pause" if _k["is_active"] else ("Enable" if _can_enable else f"Pause one first")
+            if st.button("⏸" if _k["is_active"] else "▶", key=f"tog_{_k['id']}",
+                         help=_tog_label, disabled=not _can_enable):
+                try:
+                    toggle_key(_user_id, _k["id"])
+                    st.session_state.user_keys = get_keys(_user_id)
+                    st.rerun()
+                except ValueError as _e:
+                    st.error(str(_e))
         with _kc3:
             if st.button("🗑", key=f"del_{_k['id']}", help="Delete key"):
                 delete_key(_user_id, _k["id"])
                 st.session_state.user_keys = get_keys(_user_id)
                 st.rerun()
 
-    if _active_count < MAX_KEYS_PER_USER:
+    if len(_user_keys) < MAX_STORED_KEYS:
+        # Form generation counter — incremented on save to reset all widget values
+        if "add_key_form_gen" not in st.session_state:
+            st.session_state.add_key_form_gen = 0
+        _gen = st.session_state.add_key_form_gen
+
         with st.expander("➕ Add API Key"):
-            _provider = st.selectbox("Provider", list(PROVIDER_PRESETS.keys()), key="new_key_provider")
+            if _active_count >= MAX_ACTIVE_KEYS:
+                st.info("5 models are already active. This key will be saved as inactive — enable it by pausing another.")
+
+            _provider = st.selectbox("Provider", list(PROVIDER_PRESETS.keys()), key=f"new_key_provider_{_gen}")
             _preset_cfg = PROVIDER_PRESETS[_provider]
             if _preset_cfg["models"]:
-                _model_id = st.selectbox("Model", _preset_cfg["models"], key="new_key_model")
+                _model_id = st.selectbox("Model", _preset_cfg["models"], key=f"new_key_model_{_gen}")
             else:
-                _model_id = st.text_input("Model ID", key="new_key_model_custom")
+                _model_id = st.text_input("Model ID", key=f"new_key_model_custom_{_gen}")
             _endpoint = _preset_cfg["endpoint"]
             if not _endpoint:
-                _endpoint = st.text_input("Endpoint URL", key="new_key_endpoint")
-            _display_name = st.text_input("Display name (optional)", key="new_key_display")
-            _api_key_input = st.text_input("API Key", type="password", key="new_key_value")
-            if st.button("🧪 Test & Save", key="save_new_key", use_container_width=True):
+                _endpoint = st.text_input("Endpoint URL", key=f"new_key_endpoint_{_gen}")
+            _display_name = st.text_input("Display name (optional)", key=f"new_key_display_{_gen}")
+            _api_key_input = st.text_input("API Key", type="password", key=f"new_key_value_{_gen}")
+
+            # Real-time duplicate name check
+            if _display_name.strip():
+                _norm = _display_name.strip().lower()
+                _dupe_name = any(
+                    (k["display_name"] or k["provider_name"]).strip().lower() == _norm
+                    for k in _user_keys
+                )
+                if _dupe_name:
+                    st.warning("An API with this name already exists.")
+
+            if st.button("🧪 Test & Save", key=f"save_new_key_{_gen}", use_container_width=True):
                 if not _api_key_input:
                     st.error("Enter an API key.")
                 elif not _endpoint:
@@ -1485,6 +1549,7 @@ with st.sidebar:
                         try:
                             save_key(_user_id, _provider, _display_name or _provider, _api_key_input, _model_id, _endpoint, _preset_cfg["api_type"])
                             st.session_state.user_keys = get_keys(_user_id)
+                            st.session_state.add_key_form_gen += 1
                             st.success("✅ Key saved!")
                             st.rerun()
                         except ValueError as _e:
@@ -1492,7 +1557,7 @@ with st.sidebar:
                     else:
                         st.error(f"❌ Key test failed: {_msg}")
     else:
-        st.info(f"Maximum of {MAX_KEYS_PER_USER} keys reached. Delete or pause one to add another.")
+        st.info(f"Storage limit of {MAX_STORED_KEYS} keys reached. Delete some to add new ones.")
 
     st.markdown("---")
     st.markdown("### 👷 Architects")

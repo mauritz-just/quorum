@@ -6,6 +6,7 @@ Keys are encrypted with Fernet (AES-128-CBC) before touching the database.
 Decrypted keys only exist in RAM, never on disk or in logs.
 """
 
+import hashlib
 import os
 import sqlite3
 import requests
@@ -77,7 +78,47 @@ PROVIDER_PRESETS = {
     },
 }
 
-MAX_KEYS_PER_USER = 5
+MAX_ACTIVE_KEYS = 5   # max simultaneously active models
+MAX_STORED_KEYS = 50  # max total keys in storage
+MAX_KEYS_PER_USER = MAX_ACTIVE_KEYS  # backward-compat alias
+
+# ──────────────────────────────────────────────
+# Model display name normalisation
+# ──────────────────────────────────────────────
+MODEL_DISPLAY_NAMES = {
+    "llama-3.3-70b-versatile": "Llama 3.3 70B",
+    "llama-3.1-8b-instant": "Llama 3.1 8B",
+    "llama-3.3-70b": "Llama 3.3 70B",
+    "gpt-4o": "GPT-4o",
+    "gpt-4o-mini": "GPT-4o Mini",
+    "gpt-4.1": "GPT-4.1",
+    "o4-mini": "o4 Mini",
+    "claude-sonnet-4-20250514": "Claude Sonnet 4",
+    "claude-haiku-4-20250414": "Claude Haiku 4",
+    "gemini-2.5-flash": "Gemini 2.5 Flash",
+    "gemini-2.5-pro": "Gemini 2.5 Pro",
+    "mistral-large-latest": "Mistral Large",
+    "devstral-medium-latest": "Devstral Medium",
+    "qwen-3-235b-a22b-instruct-2507": "Qwen3 235B",
+    "openai/gpt-4o": "GPT-4o",
+    "anthropic/claude-sonnet-4": "Claude Sonnet 4",
+    "meta-llama/llama-3.3-70b-instruct:free": "Llama 3.3 70B (free)",
+}
+
+
+def get_model_display_name(model_id: str) -> str:
+    """Return a human-readable model name, falling back to the raw model_id."""
+    return MODEL_DISPLAY_NAMES.get(model_id, model_id)
+
+
+def build_key_display_name(display_name: str, provider_name: str, model_id: str) -> str:
+    """
+    Canonical display name for a user key: 'ModelName · Alias'.
+    Ensures all keys for the same model look identical except for the alias.
+    """
+    model_pretty = get_model_display_name(model_id)
+    alias = (display_name or "").strip() or provider_name
+    return f"{model_pretty} · {alias}"
 
 
 # ──────────────────────────────────────────────
@@ -114,24 +155,51 @@ def _get_conn():
 
 
 def save_key(user_id, provider_name, display_name, plaintext_key, model_id, endpoint_url, api_type="openai_compat"):
-    """Encrypt and store an API key. Returns the new key's ID or raises on error."""
-    # Check limit
-    count = count_active_keys(user_id)
-    if count >= MAX_KEYS_PER_USER:
-        raise ValueError(f"Maximum of {MAX_KEYS_PER_USER} API keys reached. Delete or deactivate one first.")
+    """
+    Encrypt and store an API key. Returns the new key's ID or raises ValueError on validation failure.
+
+    Validations (all before touching the DB):
+      - Total stored keys < MAX_STORED_KEYS
+      - Display name is unique (case-insensitive, trimmed)
+      - Plaintext key is unique (hash-based, no plaintext comparison)
+
+    The new key is saved as active if the user is below MAX_ACTIVE_KEYS, otherwise inactive.
+    """
+    all_keys = get_keys(user_id)
+
+    # Storage limit
+    if len(all_keys) >= MAX_STORED_KEYS:
+        raise ValueError(f"Storage limit of {MAX_STORED_KEYS} keys reached. Delete some first.")
+
+    # Duplicate display name (case-insensitive, whitespace-normalised)
+    norm_alias = (display_name or provider_name).strip().lower()
+    for k in all_keys:
+        existing_alias = (k["display_name"] or k["provider_name"]).strip().lower()
+        if existing_alias == norm_alias:
+            raise ValueError("An API with this name already exists.")
+
+    # Duplicate key (hash-based — never compare plaintext directly)
+    new_hash = hashlib.sha256(plaintext_key.strip().encode()).hexdigest()
+    for k in all_keys:
+        if k["key"] and hashlib.sha256(k["key"].strip().encode()).hexdigest() == new_hash:
+            raise ValueError("This API key has already been added.")
+
+    # Active status: on if below limit, off otherwise
+    active_count = sum(1 for k in all_keys if k["is_active"])
+    is_active = 1 if active_count < MAX_ACTIVE_KEYS else 0
 
     encrypted = encrypt_key(plaintext_key)
     conn = _get_conn()
     cursor = conn.cursor()
     cursor.execute(
-        """INSERT INTO api_keys (user_id, provider_name, display_name, encrypted_key, model_id, endpoint_url, api_type)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (user_id, provider_name, display_name, encrypted, model_id, endpoint_url, api_type),
+        """INSERT INTO api_keys (user_id, provider_name, display_name, encrypted_key, model_id, endpoint_url, api_type, is_active)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (user_id, provider_name, display_name, encrypted, model_id, endpoint_url, api_type, is_active),
     )
     conn.commit()
     key_id = cursor.lastrowid
     conn.close()
-    return key_id
+    return key_id, is_active
 
 
 def get_keys(user_id):
@@ -174,8 +242,20 @@ def delete_key(user_id, key_id):
 
 
 def toggle_key(user_id, key_id):
-    """Toggle a key's is_active status."""
+    """Toggle a key's is_active status. Raises ValueError when enabling would exceed MAX_ACTIVE_KEYS."""
     conn = _get_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT is_active FROM api_keys WHERE id = ? AND user_id = ?", (key_id, user_id))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return
+    currently_active = row["is_active"]
+    if not currently_active:
+        active_count = count_active_keys(user_id)
+        if active_count >= MAX_ACTIVE_KEYS:
+            conn.close()
+            raise ValueError(f"Maximum of {MAX_ACTIVE_KEYS} active models reached. Pause one first.")
     conn.execute(
         "UPDATE api_keys SET is_active = CASE WHEN is_active = 1 THEN 0 ELSE 1 END WHERE id = ? AND user_id = ?",
         (key_id, user_id),
@@ -267,7 +347,7 @@ def build_models_dict(user_keys, fallback_models):
     for k in user_keys:
         if not k["is_active"] or not k["key"]:
             continue
-        name = f"{k['display_name'] or k['provider_name']} · {k['model_id']}"
+        name = build_key_display_name(k["display_name"], k["provider_name"], k["model_id"])
         models[name] = {
             "api_key": k["key"],
             "endpoint": k["endpoint_url"],
