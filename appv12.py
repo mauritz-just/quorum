@@ -83,17 +83,16 @@ FALLBACK_MODELS = {
     },
 }
 
-# Add OpenAI o5-mini if API key is configured
-if os.getenv("OPENAI_API_KEY"):
-    FALLBACK_MODELS["OpenAI · o5-mini"] = {
-        "api_key": os.getenv("OPENAI_API_KEY", ""),
-        "endpoint": "https://api.openai.com/v1/chat/completions",
-        "model_id": "o5-mini",
-        "type": "openai_compat",
-        "icon": "🟢",
-        "color": "#10A37F",
-        "provider": "OpenAI",
-    }
+# OpenAI o5-mini — always listed; key comes from env or user-added key
+FALLBACK_MODELS["OpenAI · o5-mini"] = {
+    "api_key": os.getenv("OPENAI_API_KEY", ""),
+    "endpoint": "https://api.openai.com/v1/chat/completions",
+    "model_id": "o5-mini",
+    "type": "openai_compat",
+    "icon": "🟢",
+    "color": "#10A37F",
+    "provider": "OpenAI",
+}
 
 # ──────────────────────────────────────────────
 # 1b · AGGREGATOR FALLBACK via OpenRouter
@@ -1229,9 +1228,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="top-bar"><h1>🏟️ QuorumAI — Model Arena & Aggregator</h1><span>Multi-LLM Aggregation Platform · Compare · Synthesise · Decide</span></div>', unsafe_allow_html=True)
-
-# ── Value Proposition + Architects (popover top-right) ──
+# ── Value Proposition + Architects (popover — above the header bar) ──
 _VP_TEXT = (
     "Our tool earns a spot in your daily workflow for one of three reasons. "
     "**Cross-verification** for students and researchers. "
@@ -1255,6 +1252,8 @@ with _vp_btn_col:
             st.markdown("---")
             st.markdown("**Architects**")
             st.markdown(_VP_ARCHITECTS)
+
+st.markdown('<div class="top-bar"><h1>🏟️ QuorumAI — Model Arena & Aggregator</h1><span>Multi-LLM Aggregation Platform · Compare · Synthesise · Decide</span></div>', unsafe_allow_html=True)
 
 # ── Settings / generation defaults (must be above sidebar) ──
 if "show_settings" not in st.session_state:
@@ -1429,9 +1428,9 @@ with st.sidebar:
             return "(auto)"
 
         if "s_analyzer_model" not in st.session_state:
-            st.session_state.s_analyzer_model = _default_role_model()
+            st.session_state.s_analyzer_model = "(auto)"
         if "s_aggregator_model" not in st.session_state:
-            st.session_state.s_aggregator_model = _default_role_model()
+            st.session_state.s_aggregator_model = _default_role_model()  # defaults to o5-mini if available
 
         _ana_idx = _role_options.index(st.session_state.s_analyzer_model) if st.session_state.s_analyzer_model in _role_options else 0
         _agg_idx = _role_options.index(st.session_state.s_aggregator_model) if st.session_state.s_aggregator_model in _role_options else 0
