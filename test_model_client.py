@@ -1,7 +1,7 @@
 """
 Tests for the ModelClient OOP hierarchy and QueryResult dataclass.
 
-These tests use mocked HTTP — no real API calls. The point is to verify
+These tests use mocked HTTP, no real API calls. The point is to verify
 that the factory dispatches to the right subclass, each subclass produces
 the right payload shape, and the public call() wrapper handles both happy
 and error paths uniformly.
