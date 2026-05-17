@@ -666,7 +666,17 @@ def _refine_via_gemini(cfg, user_msg, timeout):
 
 def _refine_via_openai_compat(cfg, user_msg, timeout):
     headers = {"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"}
-    payload = {"model": cfg["model_id"], "messages": [{"role": "system", "content": REFINER_SYSTEM_PROMPT}, {"role": "user", "content": user_msg}], "max_tokens": 1500, "temperature": 0.3}
+    model_id = cfg["model_id"]
+    payload = {
+        "model": model_id,
+        "messages": [{"role": "system", "content": REFINER_SYSTEM_PROMPT}, {"role": "user", "content": user_msg}],
+    }
+    # Reasoning models (o-series, gpt-5) need max_completion_tokens and reject custom temperature
+    if re.match(r"^(o\d|gpt-5)", model_id):
+        payload["max_completion_tokens"] = 1500
+    else:
+        payload["max_tokens"] = 1500
+        payload["temperature"] = 0.3
     resp = requests.post(cfg["endpoint"], headers=headers, json=payload, timeout=timeout)
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"]
@@ -948,19 +958,19 @@ class GeminiClient(ModelClient):
 class OpenAICompatClient(ModelClient):
     """Any provider speaking the OpenAI Chat Completions shape (Groq, Mistral, Cerebras, OpenRouter, …)."""
 
-    # OpenAI o-series reasoning models require max_completion_tokens and reject temperature
-    _O_SERIES_RE = re.compile(r"^o\d")
+    # OpenAI o-series and GPT-5 models require max_completion_tokens and reject custom temperature
+    _REASONING_RE = re.compile(r"^(o\d|gpt-5)")
 
     def generate(self, prompt, max_tokens=1024, temperature=0.7, timeout=90):
         cfg = self.config
         headers = {"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"}
         model_id = cfg.get("model_id", "")
-        is_o_series = bool(self._O_SERIES_RE.match(model_id))
+        is_reasoning = bool(self._REASONING_RE.match(model_id))
         payload = {
             "model": model_id,
             "messages": [{"role": "user", "content": prompt}],
         }
-        if is_o_series:
+        if is_reasoning:
             # Reasoning models: use max_completion_tokens, no temperature
             payload["max_completion_tokens"] = max_tokens
         else:

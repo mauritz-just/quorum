@@ -307,12 +307,17 @@ def test_key(provider_name, plaintext_key, model_id, endpoint_url, api_type="ope
 
 def _test_openai_compat(key, model_id, endpoint_url):
     """Test an OpenAI-compatible API key with a tiny request."""
+    import re as _re
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
     payload = {
         "model": model_id,
         "messages": [{"role": "user", "content": "Hi"}],
-        "max_tokens": 5,
     }
+    # Reasoning models (o-series, gpt-5) require max_completion_tokens; older models use max_tokens
+    if _re.match(r"^(o\d|gpt-5)", model_id):
+        payload["max_completion_tokens"] = 5
+    else:
+        payload["max_tokens"] = 5
     resp = requests.post(endpoint_url, headers=headers, json=payload, timeout=15)
     if resp.status_code == 200:
         return True, "Key is valid"
