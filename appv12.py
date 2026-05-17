@@ -1116,7 +1116,9 @@ def aggregate_responses(user_prompt, results, preferred_aggregator=None):
                 _agg_text = _call_anthropic(meta_prompt, _agg_cfg, max_tokens=2048, temperature=0.3, timeout=120)
             else:
                 _agg_text = _call_openai_compat(meta_prompt, _agg_cfg, max_tokens=2048, temperature=0.3, timeout=120)
-            return _agg_text + f"\n\n---\n*Aggregated by {preferred_aggregator}*"
+            if _agg_text and _agg_text.strip():
+                return _agg_text + f"\n\n---\n*Aggregated by {preferred_aggregator}*"
+            # empty response — fall through to built-in fallback chain
         except Exception:
             pass  # fall through to built-in fallback chain
 
@@ -1811,6 +1813,12 @@ def add_prompt_log_entry(entry):
     st.session_state.query_history.append(entry)
     save_history_entry(_user_id, entry)
 
+
+# ── Pre-compute analysis_position so button clicks take effect before any rendering ──
+if broadcast_clicked and user_prompt.strip():
+    st.session_state.analysis_position = "below"
+elif analyze_clicked and user_prompt.strip():
+    st.session_state.analysis_position = "above"
 
 # ── Prompt Diagnostic: render ABOVE output when analysis_position == "above" ──
 _analysis_for_render = st.session_state.last_analysis
