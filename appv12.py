@@ -2022,7 +2022,6 @@ if _bo:
                 st.markdown("---")
             if _src_names:
                 st.caption(f"Sources: {', '.join(_src_names)}")
-            st.download_button("📥 Download Result", data=_bo_synthesis, file_name="quorum_result.md", mime="text/markdown", key="dl_bo_synthesis")
         else:
             st.warning("Not enough successful responses to aggregate (need at least 2).")
 
