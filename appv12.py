@@ -1107,20 +1107,24 @@ def aggregate_responses(user_prompt, results, preferred_aggregator=None):
     meta_prompt = AGGREGATION_PROMPT.format(count=len(valid), user_prompt=user_prompt, responses_block=responses_block)
 
     # ── Attempt 0: User-selected aggregator model ──
+    _attempt0_error = None
     if preferred_aggregator and preferred_aggregator in MODELS:
         _agg_cfg = MODELS[preferred_aggregator]
-        try:
-            if _agg_cfg["type"] == "gemini":
-                _agg_text = _call_gemini(meta_prompt, _agg_cfg, max_tokens=2048, temperature=0.3, timeout=120)
-            elif _agg_cfg["type"] == "anthropic":
-                _agg_text = _call_anthropic(meta_prompt, _agg_cfg, max_tokens=2048, temperature=0.3, timeout=120)
-            else:
-                _agg_text = _call_openai_compat(meta_prompt, _agg_cfg, max_tokens=2048, temperature=0.3, timeout=120)
-            if _agg_text and _agg_text.strip():
-                return _agg_text + f"\n\n---\n*Aggregated by {preferred_aggregator}*"
-            # empty response — fall through to built-in fallback chain
-        except Exception:
-            pass  # fall through to built-in fallback chain
+        if not _agg_cfg.get("api_key"):
+            _attempt0_error = f"No API key configured for {preferred_aggregator}."
+        else:
+            try:
+                if _agg_cfg["type"] == "gemini":
+                    _agg_text = _call_gemini(meta_prompt, _agg_cfg, max_tokens=2048, temperature=0.3, timeout=120)
+                elif _agg_cfg["type"] == "anthropic":
+                    _agg_text = _call_anthropic(meta_prompt, _agg_cfg, max_tokens=2048, temperature=0.3, timeout=120)
+                else:
+                    _agg_text = _call_openai_compat(meta_prompt, _agg_cfg, max_tokens=2048, temperature=0.3, timeout=120)
+                if _agg_text and _agg_text.strip():
+                    return _agg_text + f"\n\n---\n*Aggregated by {preferred_aggregator}*"
+                _attempt0_error = f"{preferred_aggregator} returned an empty response."
+            except Exception as _e:
+                _attempt0_error = str(_e)  # captured — fall through to built-in fallback chain
 
     # ── Attempt 1: Gemini (first available Gemini model) ──
     gemini_error = None
@@ -1141,13 +1145,15 @@ def aggregate_responses(user_prompt, results, preferred_aggregator=None):
             if not candidates:
                 raise RuntimeError("Gemini returned no candidates")
             text = candidates[0]["content"]["parts"][0]["text"]
-            return text + f"\n\n---\n*Aggregated by {_gemini_name}*"
+            _a0_note = f"\n\n> ⚠️ **{preferred_aggregator} failed** — fell back to {_gemini_name}.\n> Error: `{_attempt0_error}`" if _attempt0_error else ""
+            return text + f"\n\n---\n*Aggregated by {_gemini_name}*" + _a0_note
         except Exception as e:
             gemini_error = e
 
     # ── Attempt 2: OpenRouter fallback ──
+    _a0_note = f"\n\n> ⚠️ **{preferred_aggregator} failed:** `{_attempt0_error}`" if _attempt0_error else ""
     if not OPENROUTER_FALLBACK.get("api_key"):
-        return f"⚠️ Gemini aggregation failed and no OpenRouter key configured.\n\nGemini error: {gemini_error}"
+        return f"⚠️ Gemini aggregation failed and no OpenRouter key configured.\n\nGemini error: {gemini_error}" + _a0_note
 
     try:
         headers = {"Authorization": f"Bearer {OPENROUTER_FALLBACK['api_key']}", "Content-Type": "application/json"}
@@ -1155,7 +1161,7 @@ def aggregate_responses(user_prompt, results, preferred_aggregator=None):
         resp = requests.post(OPENROUTER_FALLBACK["endpoint"], headers=headers, json=payload, timeout=120)
         resp.raise_for_status()
         text = resp.json()["choices"][0]["message"]["content"]
-        return text + f"\n\n---\n*⚠️ Aggregated by {OPENROUTER_FALLBACK['name']} (fallback)*"
+        return text + f"\n\n---\n*⚠️ Aggregated by {OPENROUTER_FALLBACK['name']} (fallback)*" + _a0_note
     except Exception as e:
         or_error = e
 
@@ -1164,7 +1170,7 @@ def aggregate_responses(user_prompt, results, preferred_aggregator=None):
         ((n, c) for n, c in MODELS.items() if c.get("type") == "openai_compat" and c.get("api_key") and c.get("model_id")), None
     )
     if not _compat_entry:
-        return f"⚠️ Aggregation failed on all models.\n\n**Gemini:** {gemini_error}\n\n**OpenRouter:** {or_error}"
+        return f"⚠️ Aggregation failed on all models.\n\n**Gemini:** {gemini_error}\n\n**OpenRouter:** {or_error}" + _a0_note
     try:
         _compat_name, groq_cfg = _compat_entry
         headers = {"Authorization": f"Bearer {groq_cfg['api_key']}", "Content-Type": "application/json"}
@@ -1172,9 +1178,9 @@ def aggregate_responses(user_prompt, results, preferred_aggregator=None):
         resp = requests.post(groq_cfg["endpoint"], headers=headers, json=payload, timeout=120)
         resp.raise_for_status()
         text = resp.json()["choices"][0]["message"]["content"]
-        return text + f"\n\n---\n*⚠️ Aggregated by {_compat_name} (fallback)*"
+        return text + f"\n\n---\n*⚠️ Aggregated by {_compat_name} (fallback)*" + _a0_note
     except Exception as groq_err:
-        return f"⚠️ Aggregation failed on all models.\n\n**Gemini:** {gemini_error}\n\n**OpenRouter:** {or_error}\n\n**Fallback:** {groq_err}"
+        return f"⚠️ Aggregation failed on all models.\n\n**Gemini:** {gemini_error}\n\n**OpenRouter:** {or_error}\n\n**Fallback:** {groq_err}" + _a0_note
 
 
 # ──────────────────────────────────────────────
