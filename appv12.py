@@ -88,7 +88,7 @@ _openai_key = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", ""))
 FALLBACK_MODELS["OpenAI · o5-mini"] = {
     "api_key": _openai_key,
     "endpoint": "https://api.openai.com/v1/chat/completions",
-    "model_id": "o5-mini",
+    "model_id": "gpt-5-mini",
     "type": "openai_compat",
     "icon": "🟢",
     "color": "#10A37F",
