@@ -1534,37 +1534,47 @@ with st.sidebar:
                     st.session_state.refinement_history = []
                     st.session_state.last_analysis = _entry.get("analysis")
 
-                    _resp  = _entry.get("responses") or {}
-                    _errs  = _entry.get("errors") or {}
-                    _times = _entry.get("times") or {}
-                    _wcs   = _entry.get("word_counts") or {}
-                    _all_models = _entry.get("models_used") or list(_resp.keys())
-                    _has_timing = bool(_times and any(v and v > 0 for v in _times.values()))
+                    _entry_mode = _entry.get("mode", "")
 
-                    _entry_results = []
-                    for _mname in _all_models:
-                        _entry_results.append({
-                            "name":     _mname,
-                            "response": _resp.get(_mname),
-                            "error":    _errs.get(_mname),
-                            "time":     _times.get(_mname, 0),
-                            "words":    _wcs.get(_mname) or len((_resp.get(_mname) or "").split()),
-                        })
+                    if _entry_mode == "Prompt Analysis":
+                        # Analysis-only entry: show diagnostic above, no output
+                        st.session_state.analysis_position = "above"
+                        st.session_state.broadcast_output = None
+                    else:
+                        # Broadcast entry: restore output, show diagnostic below
+                        st.session_state.analysis_position = "below"
+                        _resp  = _entry.get("responses") or {}
+                        _errs  = _entry.get("errors") or {}
+                        _times = _entry.get("times") or {}
+                        _wcs   = _entry.get("word_counts") or {}
+                        _all_models = _entry.get("models_used") or list(_resp.keys())
+                        _has_timing = bool(_times and any(v and v > 0 for v in _times.values()))
 
-                    _syn = _entry.get("synthesis")
-                    st.session_state.broadcast_output = {
-                        "synthesis":    _syn,
-                        "results":      _entry_results,
-                        "mode":         _entry.get("mode", "Aggregator"),
-                        "prompt":       _entry["full_prompt"],
-                        "quality":      _entry.get("quality", 0),
-                        "complexity":   _entry.get("complexity", ""),
-                        "n_models":     len(_entry_results),
-                        "has_timing":   _has_timing,
-                        "from_history": True,
-                        "timestamp":    _entry.get("timestamp", ""),
-                        "summary":      _entry.get("summary", ""),
-                    } if (_entry_results or _syn) else None
+                        _entry_results = []
+                        for _mname in _all_models:
+                            _entry_results.append({
+                                "name":     _mname,
+                                "response": _resp.get(_mname),
+                                "error":    _errs.get(_mname),
+                                "time":     _times.get(_mname, 0),
+                                "words":    _wcs.get(_mname) or len((_resp.get(_mname) or "").split()),
+                            })
+
+                        _syn = _entry.get("synthesis")
+                        st.session_state.broadcast_output = {
+                            "synthesis":    _syn,
+                            "results":      _entry_results,
+                            "mode":         _entry_mode,
+                            "prompt":       _entry["full_prompt"],
+                            "quality":      _entry.get("quality", 0),
+                            "complexity":   _entry.get("complexity", ""),
+                            "n_models":     len(_entry_results),
+                            "has_timing":   _has_timing,
+                            "from_history": True,
+                            "timestamp":    _entry.get("timestamp", ""),
+                            "summary":      _entry.get("summary", ""),
+                        } if (_entry_results or _syn) else None
+
                     st.rerun()
 
         st.markdown("")
@@ -1592,6 +1602,7 @@ for key, default in [
     ("_prompt_to_apply", None),
     ("_loaded_history_entry", None),
     ("broadcast_output", None),
+    ("analysis_position", "below"),  # "above" = show diagnostic first; "below" = show after output
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -1785,13 +1796,56 @@ def _render_diagnostic_section(analysis, user_prompt):
     st.info("👆 When you're happy, click **📡 Broadcast to selected Models** to send it out.")
 
 
-# ── STAGE 1: Analyze (stores result, renders below broadcast) ──
+# ── Helper: save a Prompt Log entry (deduplicates by full_prompt + mode) ──
+def add_prompt_log_entry(entry):
+    if "id" not in entry:
+        entry["id"] = str(_uuid.uuid4())
+    if "timestamp" not in entry:
+        entry["timestamp"] = datetime.now().strftime("%d.%m.%Y · %H:%M:%S")
+    if "summary" not in entry:
+        entry["summary"] = summarise_prompt(entry.get("full_prompt", ""))
+    # Skip if the most recent entry already has the same prompt + mode (prevents rerun duplicates)
+    _last = st.session_state.query_history[-1] if st.session_state.query_history else None
+    if _last and _last.get("full_prompt") == entry.get("full_prompt") and _last.get("mode") == entry.get("mode"):
+        return
+    st.session_state.query_history.append(entry)
+    save_history_entry(_user_id, entry)
+
+
+# ── Prompt Diagnostic: render ABOVE output when analysis_position == "above" ──
+_analysis_for_render = st.session_state.last_analysis
+if _analysis_for_render and show_prompt_analysis and st.session_state.analysis_position == "above":
+    _render_diagnostic_section(_analysis_for_render, user_prompt)
+
+
+# ── STAGE 1: Analyze — save to Prompt Log, move diagnostic above output ──
 if analyze_clicked and user_prompt.strip():
-    st.session_state.last_analysis = analyse_prompt(user_prompt)
+    _ana = analyse_prompt(user_prompt)
+    st.session_state.last_analysis = _ana
+    st.session_state.analysis_position = "above"
     st.session_state._pending_refined = None
     st.session_state._pending_analysis = None
     if not st.session_state.refinement_history:
-        st.session_state.refinement_history.append({"version": "v1 (original)", "prompt": user_prompt, "quality": st.session_state.last_analysis["quality"], "changes": []})
+        st.session_state.refinement_history.append({"version": "v1 (original)", "prompt": user_prompt, "quality": _ana["quality"], "changes": []})
+    add_prompt_log_entry({
+        "full_prompt":      user_prompt,
+        "prompt":           user_prompt[:120] + ("…" if len(user_prompt) > 120 else ""),
+        "mode":             "Prompt Analysis",
+        "quality":          _ana["quality"],
+        "complexity":       _ana["complexity_level"],
+        "analysis":         _ana,
+        "models_used":      [],
+        "successful":       [],
+        "failed":           [],
+        "times":            {},
+        "responses":        {},
+        "errors":           {},
+        "word_counts":      {},
+        "synthesis":        None,
+        "aggregator_model": st.session_state.get("s_aggregator_model"),
+        "analyzer_model":   st.session_state.get("s_analyzer_model"),
+        "output_models":    selected_models,
+    })
 
 # ── STAGE 2: Broadcast — compute & store, rendering happens below ──
 if broadcast_clicked and user_prompt.strip():
@@ -1854,12 +1908,11 @@ if broadcast_clicked and user_prompt.strip():
     }
 
     # ── Save run to Prompt Log (query_history) ──
-    _summary_text = summarise_prompt(user_prompt)
-    history_entry = {
+    st.session_state.analysis_position = "below"
+    add_prompt_log_entry({
         "timestamp":        datetime.now().strftime("%d.%m.%Y · %H:%M:%S"),
-        "summary":          _summary_text,
-        "prompt":           user_prompt[:120] + ("…" if len(user_prompt) > 120 else ""),
         "full_prompt":      user_prompt,
+        "prompt":           user_prompt[:120] + ("…" if len(user_prompt) > 120 else ""),
         "mode":             "Arena" if is_arena else "Aggregator",
         "quality":          analysis["quality"],
         "complexity":       analysis["complexity_level"],
@@ -1875,10 +1928,7 @@ if broadcast_clicked and user_prompt.strip():
         "aggregator_model": st.session_state.get("s_aggregator_model"),
         "analyzer_model":   st.session_state.get("s_analyzer_model"),
         "output_models":    list(models_to_call),
-    }
-    if not st.session_state.query_history or st.session_state.query_history[-1]["full_prompt"] != user_prompt:
-        st.session_state.query_history.append(history_entry)
-        save_history_entry(_user_id, history_entry)
+    })
 
 
 # ── Persistent results render (live broadcast OR history recall) ──
@@ -1991,10 +2041,9 @@ if _bo:
                 st.markdown(f"**{_cfg.get('icon','🤖')} {_r['name']}** — {_r['time']}s  ·  {_r['words']} words {_lbl}")
                 st.progress(min(_bp, 1.0))
 
-# ── Prompt Diagnostic (rendered AFTER broadcast results) ──
-analysis = st.session_state.last_analysis
-if analysis and show_prompt_analysis:
-    _render_diagnostic_section(analysis, user_prompt)
+# ── Prompt Diagnostic: render BELOW output when analysis_position == "below" ──
+if _analysis_for_render and show_prompt_analysis and st.session_state.analysis_position == "below":
+    _render_diagnostic_section(_analysis_for_render, user_prompt)
 
 elif (analyze_clicked or broadcast_clicked) and not user_prompt.strip():
     st.warning("Please enter a prompt first.")
