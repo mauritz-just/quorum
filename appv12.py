@@ -1821,19 +1821,8 @@ def add_prompt_log_entry(entry):
     save_history_entry(_user_id, entry)
 
 
-# ── Pre-compute analysis_position so button clicks take effect before any rendering ──
-if broadcast_clicked and user_prompt.strip():
-    st.session_state.analysis_position = "below"
-elif analyze_clicked and user_prompt.strip():
-    st.session_state.analysis_position = "above"
-
-# ── Prompt Diagnostic: render ABOVE output when analysis_position == "above" ──
-_analysis_for_render = st.session_state.last_analysis
-if _analysis_for_render and show_prompt_analysis and st.session_state.analysis_position == "above":
-    _render_diagnostic_section(_analysis_for_render, user_prompt)
-
-
-# ── STAGE 1: Analyze — save to Prompt Log, move diagnostic above output ──
+# ── STAGE 1: Analyze — runs BEFORE the render guard so last_analysis is
+#    populated on the very first click (not the second). ──
 if analyze_clicked and user_prompt.strip():
     _ana = analyse_prompt(user_prompt)
     st.session_state.last_analysis = _ana
@@ -1861,6 +1850,15 @@ if analyze_clicked and user_prompt.strip():
         "analyzer_model":   st.session_state.get("s_analyzer_model"),
         "output_models":    selected_models,
     })
+
+# ── Pre-compute position for broadcast so the "above" guard below doesn't fire ──
+if broadcast_clicked and user_prompt.strip():
+    st.session_state.analysis_position = "below"
+
+# ── Prompt Diagnostic: render ABOVE output when analysis_position == "above" ──
+_analysis_for_render = st.session_state.last_analysis
+if _analysis_for_render and show_prompt_analysis and st.session_state.analysis_position == "above":
+    _render_diagnostic_section(_analysis_for_render, user_prompt)
 
 # ── STAGE 2: Broadcast — compute & store, rendering happens below ──
 if broadcast_clicked and user_prompt.strip():
