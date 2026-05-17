@@ -1745,7 +1745,14 @@ def _render_diagnostic_section(analysis, user_prompt):
         old_q = st.session_state._pending_old_quality
         refiner_name = st.session_state._pending_refiner
         st.success(f"Refined with {refiner_name} · quality {old_q} → {pending_analysis['quality']}")
-        st.code(refined_text, language="text")
+        _escaped = refined_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        st.markdown(
+            f'<div style="background:#0f172a;border:1px solid #334155;border-radius:6px;'
+            f'padding:0.75rem 1rem;font-family:monospace;font-size:0.85rem;color:#e2e8f0;'
+            f'white-space:pre-wrap;word-break:break-word;overflow-wrap:break-word;'
+            f'max-height:40vh;overflow-y:auto;line-height:1.55">{_escaped}</div>',
+            unsafe_allow_html=True,
+        )
         use_col, dismiss_col, _ = st.columns([1, 1, 3])
         with use_col:
             if st.button("✅ Use This Prompt", type="primary", use_container_width=True, key="use_refined"):
