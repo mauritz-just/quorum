@@ -1645,26 +1645,23 @@ if user_prompt.strip() and selected_models:
     _complexity_color = {"Simple": "#22c55e", "Moderate": "#f59e0b", "Complex": "#ef4444"}
     _cc = _complexity_color.get(_live_analysis["complexity_level"], "#94a3b8")
 
-    st.markdown(f"""
-    <div style="background:linear-gradient(135deg,#0f172a,#1e293b);border:1px solid #334155;
-                border-left:4px solid {_cc};border-radius:10px;padding:0.9rem 1.2rem;margin:0.6rem 0;">
-        <div style="display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap;">
-            <span style="font-size:1.2rem">{_rec["icon"]}</span>
-            <span style="font-weight:700;color:#e2e8f0;font-size:0.95rem">{_rec["label"]}</span>
-            <span style="color:#64748b;font-size:0.8rem">·</span>
-            <span style="color:#94a3b8;font-size:0.82rem">{_live_analysis["complexity_level"]} prompt
-              ({_live_analysis["complexity"]}/100)</span>
-            <span style="color:#64748b;font-size:0.8rem">·</span>
-            <span style="color:#94a3b8;font-size:0.82rem">Quality {_live_analysis["quality"]}/100</span>
-        </div>
-        <div style="margin-top:0.5rem;font-size:0.8rem;color:#64748b">{_rec["reasoning"]}</div>
-        <div style="margin-top:0.6rem;display:flex;gap:0.4rem;flex-wrap:wrap;align-items:center">
-            <span style="color:#64748b;font-size:0.78rem;margin-right:4px">Recommended:</span>
-            {_suggested_pills}
-            {"<span style='color:#475569;font-size:0.78rem;margin-left:8px'>skip: " + _skipped_pills + "</span>" if _skipped_pills else ""}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    _skip_html = (f"<span style='color:#475569;font-size:0.78rem;margin-left:8px'>skip: {_skipped_pills}</span>" if _skipped_pills else "")
+    st.markdown(
+        f'<div style="background:linear-gradient(135deg,#0f172a,#1e293b);border:1px solid #334155;'
+        f'border-left:4px solid {_cc};border-radius:10px;padding:0.9rem 1.2rem;margin:0.6rem 0;">'
+        f'<div style="display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap;">'
+        f'<span style="font-size:1.2rem">{_rec["icon"]}</span>'
+        f'<span style="font-weight:700;color:#e2e8f0;font-size:0.95rem">{_rec["label"]}</span>'
+        f'<span style="color:#64748b;font-size:0.8rem">·</span>'
+        f'<span style="color:#94a3b8;font-size:0.82rem">{_live_analysis["complexity_level"]} prompt ({_live_analysis["complexity"]}/100)</span>'
+        f'<span style="color:#64748b;font-size:0.8rem">·</span>'
+        f'<span style="color:#94a3b8;font-size:0.82rem">Quality {_live_analysis["quality"]}/100</span></div>'
+        f'<div style="margin-top:0.5rem;font-size:0.8rem;color:#64748b">{_rec["reasoning"]}</div>'
+        f'<div style="margin-top:0.6rem;display:flex;gap:0.4rem;flex-wrap:wrap;align-items:center">'
+        f'<span style="color:#64748b;font-size:0.78rem;margin-right:4px">Recommended:</span>'
+        f'{_suggested_pills}{_skip_html}</div></div>',
+        unsafe_allow_html=True,
+    )
 
 col_a, col_b = st.columns([1, 1])
 with col_a:
