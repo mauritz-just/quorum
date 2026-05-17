@@ -528,6 +528,9 @@ class PromptAnalyzer:
 
 
 # Backwards-compatible module-level wrapper (used everywhere in the UI layer).
+# @st.cache_data memoises by argument — identical prompt text returns instantly
+# from cache instead of re-running all seven dimension scorers.
+@st.cache_data(show_spinner=False)
 def analyse_prompt(text):
     return PromptAnalyzer(text).analyse()
 
@@ -1201,12 +1204,13 @@ user = require_auth()
 if not user:
     st.stop()
 
-# ── Build MODELS from user keys + fallbacks ──
+# ── Build MODELS from user keys + fallbacks (cached in session_state) ──
 _user_id = user["id"]
 if "user_keys" not in st.session_state:
     st.session_state.user_keys = get_keys(_user_id)
+    st.session_state._models_cache = build_models_dict(st.session_state.user_keys, FALLBACK_MODELS)
 
-MODELS = build_models_dict(st.session_state.user_keys, FALLBACK_MODELS)
+MODELS = st.session_state._models_cache
 
 # ── Load persisted user data once per session (survives refresh & re-login) ──
 if "s_meta_prompt" not in st.session_state:
@@ -1372,6 +1376,7 @@ with st.sidebar:
                     try:
                         toggle_key(_user_id, _k["id"])
                         st.session_state.user_keys = get_keys(_user_id)
+                        st.session_state._models_cache = build_models_dict(st.session_state.user_keys, FALLBACK_MODELS)
                         st.rerun()
                     except ValueError as _e:
                         st.error(str(_e))
@@ -1379,6 +1384,7 @@ with st.sidebar:
                 if st.button("🗑", key=f"del_{_k['id']}", help="Delete key"):
                     delete_key(_user_id, _k["id"])
                     st.session_state.user_keys = get_keys(_user_id)
+                    st.session_state._models_cache = build_models_dict(st.session_state.user_keys, FALLBACK_MODELS)
                     st.rerun()
 
         if "add_key_form_gen" not in st.session_state:
@@ -1436,6 +1442,7 @@ with st.sidebar:
                         try:
                             save_key(_user_id, _provider, _display_name or _provider, _api_key_input, _model_id, _endpoint, _preset_cfg["api_type"])
                             st.session_state.user_keys = get_keys(_user_id)
+                            st.session_state._models_cache = build_models_dict(st.session_state.user_keys, FALLBACK_MODELS)
                             st.session_state.add_key_form_gen += 1
                             st.success("✅ Key saved!")
                             st.rerun()
