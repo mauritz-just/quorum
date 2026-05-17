@@ -83,12 +83,12 @@ FALLBACK_MODELS = {
     },
 }
 
-# OpenAI o5-mini — key from Streamlit secrets (preferred) or .env fallback
+# OpenAI o3-mini — key from Streamlit secrets (preferred) or .env fallback
 _openai_key = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", ""))
-FALLBACK_MODELS["OpenAI · o5-mini"] = {
+FALLBACK_MODELS["OpenAI · o3-mini"] = {
     "api_key": _openai_key,
     "endpoint": "https://api.openai.com/v1/chat/completions",
-    "model_id": "gpt-5-mini",
+    "model_id": "o3-mini",
     "type": "openai_compat",
     "icon": "🟢",
     "color": "#10A37F",
@@ -978,7 +978,7 @@ class OpenAICompatClient(ModelClient):
             payload["temperature"] = temperature
         resp = requests.post(cfg["endpoint"], headers=headers, json=payload, timeout=timeout)
         resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        return resp.json()["choices"][0]["message"]["content"] or ""
 
 
 class AnthropicClient(ModelClient):
@@ -1119,7 +1119,12 @@ def aggregate_responses(user_prompt, results, preferred_aggregator=None):
                 elif _agg_cfg["type"] == "anthropic":
                     _agg_text = _call_anthropic(meta_prompt, _agg_cfg, max_tokens=2048, temperature=0.3, timeout=120)
                 else:
-                    _agg_text = _call_openai_compat(meta_prompt, _agg_cfg, max_tokens=2048, temperature=0.3, timeout=120)
+                    # Reasoning models (o-series / gpt-5-*) split max_completion_tokens between
+                    # internal CoT reasoning and visible output. The aggregation meta-prompt is
+                    # large, so we need a much higher ceiling to leave room for actual output.
+                    _is_reasoning = bool(__import__('re').match(r'^(o\d|gpt-5)', _agg_cfg.get('model_id', '')))
+                    _agg_max = 16000 if _is_reasoning else 2048
+                    _agg_text = _call_openai_compat(meta_prompt, _agg_cfg, max_tokens=_agg_max, temperature=0.3, timeout=120)
                 if _agg_text and _agg_text.strip():
                     return _agg_text + f"\n\n---\n*Aggregated by {preferred_aggregator}*"
                 _attempt0_error = f"{preferred_aggregator} returned an empty response."
@@ -1451,14 +1456,14 @@ with st.sidebar:
 
         def _default_role_model():
             for _rn in MODELS:
-                if "o5-mini" in _rn or MODELS[_rn].get("model_id", "") == "o5-mini":
+                if "o3-mini" in _rn or MODELS[_rn].get("model_id", "") == "o3-mini":
                     return _rn
             return "(auto)"
 
         if "s_analyzer_model" not in st.session_state:
             st.session_state.s_analyzer_model = "(auto)"
         if "s_aggregator_model" not in st.session_state:
-            st.session_state.s_aggregator_model = _default_role_model()  # defaults to o5-mini if available
+            st.session_state.s_aggregator_model = _default_role_model()  # defaults to o3-mini if available
 
         _ana_idx = _role_options.index(st.session_state.s_analyzer_model) if st.session_state.s_analyzer_model in _role_options else 0
         _agg_idx = _role_options.index(st.session_state.s_aggregator_model) if st.session_state.s_aggregator_model in _role_options else 0

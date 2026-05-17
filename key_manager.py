@@ -30,7 +30,7 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quorumai.db"
 PROVIDER_PRESETS = {
     "OpenAI": {
         "endpoint": "https://api.openai.com/v1/chat/completions",
-        "models": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "o4-mini", "gpt-5-mini"],
+        "models": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "o3-mini", "o4-mini"],
         "api_type": "openai_compat",
         "icon": "🟢",
     },
@@ -92,7 +92,7 @@ MODEL_DISPLAY_NAMES = {
     "gpt-4o": "GPT-4o",
     "gpt-4o-mini": "GPT-4o Mini",
     "gpt-4.1": "GPT-4.1",
-    "gpt-5-mini": "GPT-5 Mini",
+    "o3-mini": "o3-mini",
     "claude-sonnet-4-20250514": "Claude Sonnet 4",
     "claude-haiku-4-20250414": "Claude Haiku 4",
     "gemini-2.5-flash": "Gemini 2.5 Flash",
