@@ -971,8 +971,10 @@ class OpenAICompatClient(ModelClient):
             "messages": [{"role": "user", "content": prompt}],
         }
         if is_reasoning:
-            # Reasoning models: use max_completion_tokens, no temperature
-            payload["max_completion_tokens"] = max_tokens
+            # Reasoning models share max_completion_tokens between CoT thinking and
+            # visible output. Enforce a minimum of 4096 so there is always room for
+            # a real response even after the model's internal reasoning is done.
+            payload["max_completion_tokens"] = max(max_tokens, 4096)
         else:
             payload["max_tokens"] = max_tokens
             payload["temperature"] = temperature
@@ -2006,11 +2008,13 @@ if _bo:
                         if _ei.get("raw"):
                             with st.expander("🔍 Raw error"):
                                 st.code(_ei["raw"], language="text")
-                    else:
+                    elif _r.get("response"):
                         if _bo_has_timing:
                             st.markdown(f'<span class="metric-pill">⏱ {_r["time"]}s</span><span class="metric-pill">📝 {_r["words"]} words</span>', unsafe_allow_html=True)
                             st.markdown("")
-                        st.markdown(_r.get("response", ""))
+                        st.markdown(_r["response"])
+                    else:
+                        st.warning("⚠️ Model returned an empty response.")
     else:
         # ── Aggregator ──
         st.markdown("#### 🧠 Aggregator — Synthesised Output")
@@ -2050,6 +2054,9 @@ if _bo:
                         if _ei.get("raw"):
                             with st.expander("🔍 Raw error"):
                                 st.code(_ei["raw"], language="text")
+                    else:
+                        st.markdown(f"**{_cfg.get('icon','🤖')} {_r['name']}**")
+                        st.warning("⚠️ Model returned an empty response.")
 
     if _bo_has_timing and _bo_results:
         with st.expander("📊 Response Time Comparison"):
